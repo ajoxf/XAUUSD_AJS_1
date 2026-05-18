@@ -9,6 +9,12 @@ adjustments, and full safety controls.
 
 ```
 config/        feature flags + runtime settings
+ui/            Streamlit web app
+  app.py         landing page
+  supervisor.py  engine lifecycle (background thread)
+  backtest.py    historical backtest engine
+  components.py  shared widgets + session state
+  pages/         Dashboard, Settings, Backtest, Logs
 src/strategy/  pure rule engine (no I/O)
   indicators   ATR, EMA, RSI, median
   premarket    daily pre-market context (run once at 00:05 UTC)
@@ -33,19 +39,41 @@ tests/         unit + integration tests
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-# edit .env with your MT5 broker credentials
+# edit .env with your MT5 broker credentials (or do this from the UI)
 ```
 
 `MetaTrader5` requires the MT5 terminal running locally (Windows or Wine).
 Other dependencies are cross-platform.
 
-## Usage
+## Web UI (recommended for non-technical users)
+
+```bash
+streamlit run ui/app.py
+```
+
+Opens at `http://localhost:8501` with four pages:
+
+- **📊 Dashboard** — live equity, today's Fibonacci levels, open position,
+  tranche status, win-rate monitors, recent activity (auto-refreshes every
+  3 s while the bot is running).
+- **⚙️ Settings** — broker credentials, risk %, starting equity, mode
+  (paper / live / dryrun), and all 28 strategy feature flags with plain-
+  English descriptions. Saves to `.env`.
+- **🧪 Backtest** — pick a date range, click Run, see the equity curve,
+  drawdown chart, win rate, and per-trade table (downloadable as CSV).
+- **📜 Logs** — filterable event log with download buttons.
+
+The sidebar has **▶ Start** / **■ Stop** buttons and shows live status.
+In paper mode (default), Start replays the last ~30 trading days through
+the engine at accelerated speed — no broker required.
+
+## CLI usage
 
 ```bash
 # inspect today's pre-market context
 python -m src.main premarket
 
-# run paper-trading loop (no broker required, synthetic ticks)
+# run paper-trading loop (no broker required)
 python -m src.main paper
 
 # run live (requires MT5 terminal + credentials in .env)
