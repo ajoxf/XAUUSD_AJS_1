@@ -1,0 +1,57 @@
+"""Aggregate runtime state for the engine."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import List, Optional
+
+from src.broker.adapter import OrderTicket
+from src.strategy.exits import PositionState
+from src.strategy.premarket import PremarketContext
+from src.strategy.safety import (CircuitBreaker, ConsecutiveLossCounter,
+                                  DailyTradeLock, WinRateMonitor)
+
+
+@dataclass
+class EngineState:
+    starting_equity: float
+    peak_equity: float
+    daily_lock: DailyTradeLock = field(default_factory=DailyTradeLock)
+    loss_counter: ConsecutiveLossCounter = field(default_factory=ConsecutiveLossCounter)
+    win_rate_monitor: WinRateMonitor = None  # type: ignore[assignment]
+    circuit_breaker: CircuitBreaker = None    # type: ignore[assignment]
+
+    today: Optional[date] = None
+    premarket: Optional[PremarketContext] = None
+
+    position: Optional[PositionState] = None
+    tickets: List[OrderTicket] = field(default_factory=list)
+
+    # Per-day weekly aggregates
+    week_trades: int = 0
+    week_wins_tp1: int = 0
+    week_wins_tp2: int = 0
+    week_sls: int = 0
+    week_regime_exits: int = 0
+    week_tp1_accels: int = 0
+    week_t3_extended: int = 0
+
+    week_b_fails: int = 0
+    week_c_fails: int = 0
+    week_d_fails: int = 0
+
+    gate_block_event: int = 0
+    gate_block_atr_floor: int = 0
+    gate_block_atr_cap: int = 0
+    gate_block_trend: int = 0
+    gate_block_daily_lock: int = 0
+    gate_block_no_signal: int = 0
+
+    def update_peak(self, equity: float) -> None:
+        if equity > self.peak_equity:
+            self.peak_equity = equity
+
+    def current_drawdown_pct(self, equity: float) -> float:
+        if self.peak_equity <= 0:
+            return 0.0
+        return max(0.0, (self.peak_equity - equity) / self.peak_equity * 100.0)

@@ -1,0 +1,67 @@
+"""Runtime settings loaded from environment / .env."""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+
+@dataclass
+class Settings:
+    # Broker
+    mt5_login: int
+    mt5_password: str
+    mt5_server: str
+    mt5_terminal_path: str
+
+    # Trading
+    symbol: str
+    starting_equity: float
+    risk_pct: float
+    magic_number: int
+
+    # Ops
+    mode: str            # 'live' | 'paper' | 'dryrun'
+    log_level: str
+    log_dir: Path
+
+    # Spec constants
+    max_spread_per_oz: float = 0.50
+    max_slippage_per_oz: float = 0.30
+    min_range_floor: float = 10.0
+    atr_cap_multiplier: float = 1.8
+    body_ratio_threshold: float = 0.60
+    rsi_long_min: float = 45.0
+    rsi_long_max: float = 65.0
+    rsi_short_min: float = 35.0
+    rsi_short_max: float = 55.0
+    tranche_1_pct: float = 0.40
+    tranche_2_pct: float = 0.30
+    breakeven_plus_pct: float = 0.30
+    tp1_accel_pct: float = 0.80
+    circuit_breaker_pct: float = 0.30   # halt if equity falls 30% from start
+    consecutive_loss_pause: int = 7
+    lot_step: float = 0.01
+    contract_size: float = 100.0         # 1 standard lot = 100 oz
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        return cls(
+            mt5_login=int(os.getenv("MT5_LOGIN", "0")),
+            mt5_password=os.getenv("MT5_PASSWORD", ""),
+            mt5_server=os.getenv("MT5_SERVER", ""),
+            mt5_terminal_path=os.getenv("MT5_TERMINAL_PATH", ""),
+            symbol=os.getenv("SYMBOL", "XAUUSD"),
+            starting_equity=float(os.getenv("STARTING_EQUITY", "100000")),
+            risk_pct=float(os.getenv("RISK_PCT", "0.03")),
+            magic_number=int(os.getenv("MAGIC_NUMBER", "20260101")),
+            mode=os.getenv("MODE", "paper").lower(),
+            log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+            log_dir=Path(os.getenv("LOG_DIR", "logs")),
+        )
