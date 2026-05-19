@@ -103,6 +103,9 @@
   function renderHeader(snap) {
     $("last-update").textContent =
       `Updated ${snap.last_heartbeat ? App.fmtTimeShort(snap.last_heartbeat) + " UTC" : "—"}`;
+    $("m-balance").textContent = App.fmtUsd(snap.balance);
+    $("m-balance-source").textContent =
+      snap.mode === "live" ? "live · MT5 account" : "paper · simulated";
     $("m-equity").textContent = App.fmtUsd(snap.equity);
     const delta = snap.equity - snap.starting_equity;
     const d = $("m-equity-delta");
@@ -342,9 +345,9 @@
     const tp2Sub = `${(tp2_fib || 1.0).toFixed(3)}× range · ${delta(tp2, entry)}`;
 
     grid.innerHTML = [
-      levelCard("ATR(20)", App.fmtUsd(pm.atr_20),
+      levelCard(`ATR(${pm.atr_short_period || 20})`, App.fmtUsd(pm.atr_20),
                  `regime ${pm.regime}`),
-      levelCard("ATR(50)", App.fmtUsd(pm.atr_50),
+      levelCard(`ATR(${pm.atr_long_period || 50})`, App.fmtUsd(pm.atr_50),
                  `ratio ${pm.regime_ratio}`),
       levelCard(`Entry (${direction})`, App.fmtUsd(entry),
                  isLong ? "buy on cross above" : "sell on cross below"),

@@ -59,6 +59,8 @@ class Engine:
             ctx = premarket.build_premarket(
                 today, daily_df, h4_df["close"],
                 prev_session_close_type=self.state.prev_session_close_type,
+                atr_short_period=self.settings.atr_short_period,
+                atr_long_period=self.settings.atr_long_period,
             )
         except Exception as exc:
             self.log.warn(f"Pre-market build failed for {today}: {exc}")

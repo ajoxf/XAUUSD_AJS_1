@@ -35,6 +35,7 @@ class SupervisorSnapshot:
     last_heartbeat: Optional[datetime]
     last_error: Optional[str]
     equity: float
+    balance: float
     starting_equity: float
     peak_equity: float
     drawdown_pct: float
@@ -52,6 +53,7 @@ class SupervisorSnapshot:
             "last_heartbeat": self.last_heartbeat.isoformat() if self.last_heartbeat else None,
             "last_error": self.last_error,
             "equity": self.equity,
+            "balance": self.balance,
             "starting_equity": self.starting_equity,
             "peak_equity": self.peak_equity,
             "drawdown_pct": self.drawdown_pct,
@@ -325,7 +327,14 @@ class EngineSupervisor:
     def snapshot(self, recent_events_limit: int = 50) -> SupervisorSnapshot:
         with self._lock:
             engine = self.engine
-            equity = self.broker.equity() if self.broker else self.settings.starting_equity
+            if self.broker:
+                try:
+                    equity = self.broker.equity()
+                    balance = self.broker.balance()
+                except Exception:
+                    equity = balance = self.settings.starting_equity
+            else:
+                equity = balance = self.settings.starting_equity
             premarket = position = None
             week: Dict[str, Any] = {}
             today = None
@@ -361,7 +370,8 @@ class EngineSupervisor:
             return SupervisorSnapshot(
                 status=self.status, mode=self.settings.mode,
                 last_heartbeat=self.last_heartbeat, last_error=self.last_error,
-                equity=equity, starting_equity=start_eq, peak_equity=peak,
+                equity=equity, balance=balance,
+                starting_equity=start_eq, peak_equity=peak,
                 drawdown_pct=drawdown_pct, today=today, premarket=premarket,
                 position=position, week=week, monitor=monitor,
                 recent_events=self._read_recent_events(recent_events_limit),
@@ -385,6 +395,8 @@ def _premarket_view(ctx) -> Dict[str, Any]:
         "date": ctx.trade_date.isoformat(),
         "range": round(ctx.range, 2), "atr_20": round(ctx.atr_20, 2),
         "atr_50": round(ctx.atr_50, 2),
+        "atr_short_period": ctx.atr_short_period,
+        "atr_long_period": ctx.atr_long_period,
         "sma200_daily": round(ctx.sma200_daily, 2),
         "regime": ctx.regime, "regime_ratio": round(ctx.regime_ratio, 3),
         "trend_bias": ctx.trend_bias,

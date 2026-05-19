@@ -40,10 +40,12 @@ class Settings:
     comex_webhook_port: int = 5050
     comex_webhook_enabled: bool = True
 
-    # Spec constants
+    # Spec constants (override via env if needed)
     max_spread_per_oz: float = 0.50
     max_slippage_per_oz: float = 0.30
     min_range_floor: float = 10.0
+    atr_short_period: int = 20      # fast ATR — range floor + Filter C
+    atr_long_period: int = 50       # slow ATR — regime baseline
     atr_cap_multiplier: float = 1.8
     body_ratio_threshold: float = 0.60
     rsi_long_min: float = 45.0
@@ -80,4 +82,6 @@ class Settings:
             comex_webhook_enabled=os.getenv("COMEX_WEBHOOK_ENABLED",
                                               "true").lower() in ("1", "true", "yes"),
             circuit_breaker_pct=float(os.getenv("CIRCUIT_BREAKER_PCT", "0.30")),
+            atr_short_period=int(os.getenv("ATR_SHORT_PERIOD", "20")),
+            atr_long_period=int(os.getenv("ATR_LONG_PERIOD", "50")),
         )

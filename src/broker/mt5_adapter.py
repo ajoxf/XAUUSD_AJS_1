@@ -116,6 +116,12 @@ class MT5Adapter(BrokerAdapter):
             raise RuntimeError("MT5 account_info() returned None")
         return float(info.equity)
 
+    def balance(self) -> float:
+        info = mt5.account_info()
+        if info is None:
+            raise RuntimeError("MT5 account_info() returned None")
+        return float(info.balance)
+
     def quote(self, symbol: str) -> TickQuote:
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:

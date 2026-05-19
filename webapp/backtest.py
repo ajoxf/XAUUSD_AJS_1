@@ -141,8 +141,9 @@ def _resolve_outcome(daily_row: pd.Series, ctx: PremarketContext,
 def run_backtest(start: date, end: date, settings: Settings,
                  progress_cb=None) -> BacktestResult:
     feed = YFinanceFeed()
-    # Fetch enough history: need 60 days before `start` for ATR(50) + EMA(50,4H)
-    lookback_buffer = 70
+    # Need at least max(SMA200, atr_long_period) bars before `start`,
+    # plus headroom for weekends/holidays
+    lookback_buffer = max(220, settings.atr_long_period + 20)
     df = feed.daily(settings.symbol, end + timedelta(days=1),
                     lookback_days=(end - start).days + lookback_buffer)
     if isinstance(df.index, pd.DatetimeIndex):
@@ -176,7 +177,11 @@ def run_backtest(start: date, end: date, settings: Settings,
             result.skipped_days += 1
             continue
         try:
-            ctx = premarket.build_premarket(trade_date, prior, h4_window["close"])
+            ctx = premarket.build_premarket(
+                trade_date, prior, h4_window["close"],
+                atr_short_period=settings.atr_short_period,
+                atr_long_period=settings.atr_long_period,
+            )
         except ValueError:
             result.skipped_days += 1
             continue

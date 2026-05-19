@@ -48,7 +48,12 @@ class BrokerAdapter(ABC):
     def disconnect(self) -> None: ...
 
     @abstractmethod
-    def equity(self) -> float: ...
+    def equity(self) -> float:
+        """Current account equity = balance + unrealised P&L on open positions."""
+
+    @abstractmethod
+    def balance(self) -> float:
+        """Realised account balance — does not move while a trade is open."""
 
     @abstractmethod
     def quote(self, symbol: str) -> TickQuote: ...

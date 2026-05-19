@@ -30,8 +30,10 @@ class PremarketContext:
     range: float
 
     # Indicators
-    atr_20: float
-    atr_50: float
+    atr_20: float                # fast ATR (period = atr_short_period)
+    atr_50: float                # slow ATR (period = atr_long_period)
+    atr_short_period: int        # actual lookback used for atr_20
+    atr_long_period: int         # actual lookback used for atr_50
     range_10d_median: float
     ema50_4h: float
     ema5_daily_now: float
@@ -134,11 +136,20 @@ def build_premarket(
     daily_df: pd.DataFrame,
     h4_closes: pd.Series,
     prev_session_close_type: Optional[str] = None,
+    atr_short_period: int = 20,
+    atr_long_period: int = 50,
 ) -> PremarketContext:
     """All required history must already be in `daily_df` (≥201 bars for
-    SMA200) and `h4_closes` (≥50). Indexed by datetime ascending."""
-    if len(daily_df) < 201:
-        raise ValueError(f"daily_df needs ≥201 rows for SMA(200), got {len(daily_df)}")
+    SMA200, and ≥atr_long_period+1) and `h4_closes` (≥50). Indexed ascending."""
+    if atr_short_period < 2 or atr_long_period < 2:
+        raise ValueError("ATR periods must be ≥ 2")
+    if atr_short_period >= atr_long_period:
+        raise ValueError("atr_short_period must be < atr_long_period (regime ratio "
+                         "requires short=fast vs long=slow)")
+    min_daily = max(201, atr_long_period + 1)
+    if len(daily_df) < min_daily:
+        raise ValueError(f"daily_df needs ≥{min_daily} rows "
+                         f"(SMA200 + ATR({atr_long_period})), got {len(daily_df)}")
     if len(h4_closes) < 50:
         raise ValueError(f"h4_closes needs ≥50 rows for EMA(50) on 4H, got {len(h4_closes)}")
 
@@ -156,8 +167,8 @@ def build_premarket(
     if range_ <= 0:
         raise ValueError("Zero range")
 
-    atr_20 = indicators.atr(daily_df.tail(21), 20)
-    atr_50 = indicators.atr(daily_df.tail(51), 50)
+    atr_20 = indicators.atr(daily_df.tail(atr_short_period + 1), atr_short_period)
+    atr_50 = indicators.atr(daily_df.tail(atr_long_period + 1), atr_long_period)
     range_10d_median = indicators.median_range(daily_df.tail(10), 10)
     ema50_4h = indicators.ema(h4_closes.tolist(), 50)
     sma200 = indicators.sma(daily_df["close"].tolist(), 200)
@@ -230,7 +241,9 @@ def build_premarket(
         trade_date=trade_date,
         prev_open=prev_open, prev_high=prev_high, prev_low=prev_low, prev_close=prev_close,
         range=range_,
-        atr_20=atr_20, atr_50=atr_50, range_10d_median=range_10d_median,
+        atr_20=atr_20, atr_50=atr_50,
+        atr_short_period=atr_short_period, atr_long_period=atr_long_period,
+        range_10d_median=range_10d_median,
         ema50_4h=ema50_4h, ema5_daily_now=ema5_now, ema5_daily_prev=ema5_prev,
         sma200_daily=sma200,
         regime=regime_reading.regime, regime_ratio=regime_reading.ratio,

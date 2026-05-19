@@ -122,6 +122,79 @@ def test_circuit_breaker_pct_default(monkeypatch):
     assert s.circuit_breaker_pct == 0.30
 
 
+def test_atr_periods_env_configurable(monkeypatch):
+    """ATR_SHORT_PERIOD / ATR_LONG_PERIOD override the spec defaults."""
+    monkeypatch.setenv("ATR_SHORT_PERIOD", "14")
+    monkeypatch.setenv("ATR_LONG_PERIOD", "30")
+    s = Settings.from_env()
+    assert s.atr_short_period == 14
+    assert s.atr_long_period == 30
+
+
+def test_atr_periods_default(monkeypatch):
+    monkeypatch.delenv("ATR_SHORT_PERIOD", raising=False)
+    monkeypatch.delenv("ATR_LONG_PERIOD", raising=False)
+    s = Settings.from_env()
+    assert s.atr_short_period == 20
+    assert s.atr_long_period == 50
+
+
+def test_premarket_uses_custom_atr_periods():
+    """Custom ATR periods change the calculated atr_20/atr_50 values."""
+    from datetime import date, datetime, timezone
+    from src.strategy import premarket
+    from tests.conftest import synthetic_daily, synthetic_h4
+    df = synthetic_daily(date(2024, 6, 25), n=220, daily_range=30.0)
+    h4 = synthetic_h4(datetime(2024, 6, 25, 13, 30, tzinfo=timezone.utc), n=220)
+    spec_ctx = premarket.build_premarket(date(2024, 6, 25), df, h4["close"])
+    custom_ctx = premarket.build_premarket(
+        date(2024, 6, 25), df, h4["close"],
+        atr_short_period=10, atr_long_period=30,
+    )
+    assert spec_ctx.atr_short_period == 20
+    assert custom_ctx.atr_short_period == 10
+    assert custom_ctx.atr_long_period == 30
+    # Different windows → different values
+    assert spec_ctx.atr_20 != pytest.approx(custom_ctx.atr_20)
+
+
+def test_premarket_rejects_invalid_atr_periods():
+    from datetime import date, datetime, timezone
+    from src.strategy import premarket
+    from tests.conftest import synthetic_daily, synthetic_h4
+    df = synthetic_daily(date(2024, 6, 25), n=220)
+    h4 = synthetic_h4(datetime(2024, 6, 25, 13, 30, tzinfo=timezone.utc), n=220)
+    # short >= long invalid
+    with pytest.raises(ValueError, match="atr_short_period must be < atr_long_period"):
+        premarket.build_premarket(date(2024, 6, 25), df, h4["close"],
+                                    atr_short_period=50, atr_long_period=20)
+    # period < 2 invalid
+    with pytest.raises(ValueError, match="ATR periods must be ≥ 2"):
+        premarket.build_premarket(date(2024, 6, 25), df, h4["close"],
+                                    atr_short_period=1, atr_long_period=10)
+
+
+def test_broker_balance_method_exists_on_all_adapters():
+    from src.broker.paper_adapter import PaperAdapter
+    p = PaperAdapter(starting_equity=50_000.0)
+    assert p.balance() == 50_000.0
+    assert p.equity() == 50_000.0
+
+
+def test_snapshot_includes_balance_from_broker(app):
+    from src.broker.paper_adapter import PaperAdapter
+    sup = app.config["SUPERVISOR"]
+    broker = PaperAdapter(starting_equity=75_000.0, spread=0.20)
+    broker.set_quote(mid=2000.0)
+    sup.broker = broker
+    snap = sup.snapshot(recent_events_limit=0)
+    assert snap.balance == 75_000.0
+    assert snap.equity == 75_000.0
+    payload = snap.to_dict()
+    assert "balance" in payload
+    assert payload["balance"] == 75_000.0
+
+
 def test_circuit_breaker_uses_configured_threshold(monkeypatch):
     """The CircuitBreaker safety check honours settings.circuit_breaker_pct."""
     from datetime import datetime, timezone
