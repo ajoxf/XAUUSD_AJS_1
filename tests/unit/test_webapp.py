@@ -195,11 +195,51 @@ def test_snapshot_includes_balance_from_broker(app):
     assert payload["balance"] == 75_000.0
 
 
-def test_paper_mode_does_not_eager_connect_to_broker(app):
-    """Paper mode skips eager connect — broker is None until Start is pressed.
-    This preserves the ticker `stale=True` behaviour on a freshly-loaded page."""
+def test_paper_mode_does_not_eager_connect_trading_broker(app):
+    """Paper mode does NOT create a trading broker eagerly — only on Start.
+    The ticker stays `stale=True` on a freshly-loaded page."""
     sup = app.config["SUPERVISOR"]
     assert sup.broker is None
+
+
+def test_paper_mode_reference_broker_when_mt5_present(app):
+    """If MT5 is reachable, paper mode attaches a reference broker for
+    balance display. Inject a fake broker to simulate that path."""
+    from src.broker.paper_adapter import PaperAdapter
+    sup = app.config["SUPERVISOR"]
+    # Simulate a successful reference attach by injecting a stand-in
+    ref = PaperAdapter(starting_equity=42_500.0)
+    ref.set_quote(mid=2000.0)
+    sup.reference_broker = ref
+    snap = sup.snapshot(recent_events_limit=0)
+    assert snap.balance == 42_500.0
+    assert snap.equity == 42_500.0
+    assert snap.balance_source == "MT5 reference · paper trading"
+
+
+def test_paper_mode_falls_back_to_starting_equity_when_no_mt5(app):
+    """No trading broker, no reference broker → fall back to settings."""
+    sup = app.config["SUPERVISOR"]
+    sup.broker = None
+    sup.reference_broker = None
+    snap = sup.snapshot(recent_events_limit=0)
+    assert snap.balance == 100_000.0
+    assert snap.balance_source == "paper · simulated"
+
+
+def test_live_mode_broker_takes_priority_over_reference(app):
+    """When the trading broker is the real MT5 (live mode), prefer it."""
+    from dataclasses import replace
+    from src.broker.paper_adapter import PaperAdapter
+    sup = app.config["SUPERVISOR"]
+    sup.settings = replace(sup.settings, mode="live")
+    live = PaperAdapter(starting_equity=12_345.0)   # stand-in for MT5Adapter
+    live.set_quote(mid=2000.0)
+    sup.broker = live
+    sup.reference_broker = PaperAdapter(starting_equity=99_999.0)
+    snap = sup.snapshot(recent_events_limit=0)
+    assert snap.balance == 12_345.0
+    assert snap.balance_source == "live · MT5 account"
 
 
 def test_live_mode_attempts_eager_connect(tmp_path, caplog):

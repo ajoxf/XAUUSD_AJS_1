@@ -104,8 +104,7 @@
     $("last-update").textContent =
       `Updated ${snap.last_heartbeat ? App.fmtTimeShort(snap.last_heartbeat) + " UTC" : "—"}`;
     $("m-balance").textContent = App.fmtUsd(snap.balance);
-    $("m-balance-source").textContent =
-      snap.mode === "live" ? "live · MT5 account" : "paper · simulated";
+    $("m-balance-source").textContent = snap.balance_source || "—";
     $("m-equity").textContent = App.fmtUsd(snap.equity);
     const delta = snap.equity - snap.starting_equity;
     const d = $("m-equity-delta");

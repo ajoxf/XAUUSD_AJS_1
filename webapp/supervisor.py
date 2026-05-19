@@ -36,6 +36,7 @@ class SupervisorSnapshot:
     last_error: Optional[str]
     equity: float
     balance: float
+    balance_source: str
     starting_equity: float
     peak_equity: float
     drawdown_pct: float
@@ -54,6 +55,7 @@ class SupervisorSnapshot:
             "last_error": self.last_error,
             "equity": self.equity,
             "balance": self.balance,
+            "balance_source": self.balance_source,
             "starting_equity": self.starting_equity,
             "peak_equity": self.peak_equity,
             "drawdown_pct": self.drawdown_pct,
@@ -75,6 +77,9 @@ class EngineSupervisor:
         self.comex_tracker = comex_tracker
         self.engine: Optional[Engine] = None
         self.broker: Optional[BrokerAdapter] = None
+        # Optional read-only MT5 connection used in paper mode to surface
+        # the real account balance on the dashboard while paper trades run.
+        self.reference_broker: Optional[BrokerAdapter] = None
         self.logger: Optional[StructuredLogger] = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -89,25 +94,42 @@ class EngineSupervisor:
         self._try_eager_connect()
 
     def _try_eager_connect(self) -> None:
-        """Attach to MT5 read-only before the engine starts, so the dashboard
-        shows the real account balance from the moment the page loads.
-        Paper mode skips this — the simulated balance comes from settings.
-        Failures are non-fatal: the user can retry by pressing Start."""
-        if self.settings.mode != "live":
-            return
+        """Attach to MT5 at app startup so the dashboard shows the real
+        account balance from the first page load.
+
+        - Live mode: attaches as the TRADING broker. When Start is pressed,
+          the engine reuses this same connection.
+        - Paper mode: attaches as a REFERENCE-ONLY broker. The PaperAdapter
+          is still used for trade simulation. The dashboard prefers the
+          reference broker's balance/equity so the user can see their real
+          account size while the bot trades in sim.
+
+        Failures are non-fatal — the user can retry by pressing Start
+        (which re-runs the connect path for the trading broker)."""
         try:
             from src.broker.mt5_adapter import MT5Adapter
-            self.broker = MT5Adapter(self.settings)
-            self.broker.connect()
-            bal = self.broker.balance()
-            eq = self.broker.equity()
-            log.info("Pre-connect to MT5 ✓ balance=$%.2f equity=$%.2f "
-                      "(engine loop not started — press Start to begin)",
-                      bal, eq)
+            adapter = MT5Adapter(self.settings)
+            adapter.connect()
+            bal = adapter.balance()
+            eq = adapter.equity()
+            if self.settings.mode == "live":
+                self.broker = adapter
+                log.info("Pre-connect to MT5 ✓ balance=$%.2f equity=$%.2f "
+                          "(trading broker — press Start to begin)", bal, eq)
+            else:
+                self.reference_broker = adapter
+                log.info("MT5 reference attached ✓ balance=$%.2f equity=$%.2f "
+                          "(paper-trading; balance shown is your real MT5 account)",
+                          bal, eq)
         except Exception as exc:
-            log.warning("Eager MT5 pre-connect skipped: %s "
-                         "(start MT5 + log in, then press Start)", exc)
-            self.broker = None
+            if self.settings.mode == "live":
+                log.warning("Eager MT5 pre-connect skipped: %s "
+                             "(start MT5 + log in, then press Start)", exc)
+                self.broker = None
+            else:
+                log.info("MT5 reference unavailable: %s "
+                          "(paper-balance fallback)", exc)
+                self.reference_broker = None
 
     @property
     def is_running(self) -> bool:
@@ -136,6 +158,7 @@ class EngineSupervisor:
                 self.broker.disconnect()
         except Exception:
             pass
+        # Keep the reference broker alive for ongoing balance display
         self.status = "stopped"
 
     def update_settings(self, settings: Settings) -> None:
@@ -358,14 +381,7 @@ class EngineSupervisor:
     def snapshot(self, recent_events_limit: int = 50) -> SupervisorSnapshot:
         with self._lock:
             engine = self.engine
-            if self.broker:
-                try:
-                    equity = self.broker.equity()
-                    balance = self.broker.balance()
-                except Exception:
-                    equity = balance = self.settings.starting_equity
-            else:
-                equity = balance = self.settings.starting_equity
+            equity, balance, balance_source = self._resolve_balance()
             premarket = position = None
             week: Dict[str, Any] = {}
             today = None
@@ -401,12 +417,41 @@ class EngineSupervisor:
             return SupervisorSnapshot(
                 status=self.status, mode=self.settings.mode,
                 last_heartbeat=self.last_heartbeat, last_error=self.last_error,
-                equity=equity, balance=balance,
+                equity=equity, balance=balance, balance_source=balance_source,
                 starting_equity=start_eq, peak_equity=peak,
                 drawdown_pct=drawdown_pct, today=today, premarket=premarket,
                 position=position, week=week, monitor=monitor,
                 recent_events=self._read_recent_events(recent_events_limit),
             )
+
+    def _resolve_balance(self) -> tuple:
+        """Returns (equity, balance, source_label) using the best available
+        data source: trading broker > reference broker > settings fallback."""
+        # 1. Trading broker (live mode after eager connect; or after Start)
+        if self.broker is not None and self.settings.mode == "live":
+            try:
+                return (self.broker.equity(), self.broker.balance(),
+                        "live · MT5 account")
+            except Exception:
+                pass
+        # 2. Reference MT5 broker (paper mode with MT5 reachable)
+        if self.reference_broker is not None:
+            try:
+                return (self.reference_broker.equity(),
+                        self.reference_broker.balance(),
+                        "MT5 reference · paper trading")
+            except Exception:
+                pass
+        # 3. Trading broker for paper mode (engine running)
+        if self.broker is not None:
+            try:
+                return (self.broker.equity(), self.broker.balance(),
+                        "paper · simulated")
+            except Exception:
+                pass
+        # 4. Fallback to env starting equity
+        return (self.settings.starting_equity, self.settings.starting_equity,
+                "paper · simulated")
 
     def _read_recent_events(self, n: int) -> List[Dict[str, Any]]:
         import json
