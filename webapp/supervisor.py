@@ -83,6 +83,32 @@ class EngineSupervisor:
         self.last_error: Optional[str] = None
         self.last_heartbeat: Optional[datetime] = None
 
+        # Eager broker connect for account-info display before the engine
+        # starts. Live mode → attach to MT5 if running. Paper → instantiate
+        # the simulated broker with starting_equity from .env.
+        self._try_eager_connect()
+
+    def _try_eager_connect(self) -> None:
+        """Attach to MT5 read-only before the engine starts, so the dashboard
+        shows the real account balance from the moment the page loads.
+        Paper mode skips this — the simulated balance comes from settings.
+        Failures are non-fatal: the user can retry by pressing Start."""
+        if self.settings.mode != "live":
+            return
+        try:
+            from src.broker.mt5_adapter import MT5Adapter
+            self.broker = MT5Adapter(self.settings)
+            self.broker.connect()
+            bal = self.broker.balance()
+            eq = self.broker.equity()
+            log.info("Pre-connect to MT5 ✓ balance=$%.2f equity=$%.2f "
+                      "(engine loop not started — press Start to begin)",
+                      bal, eq)
+        except Exception as exc:
+            log.warning("Eager MT5 pre-connect skipped: %s "
+                         "(start MT5 + log in, then press Start)", exc)
+            self.broker = None
+
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -131,19 +157,24 @@ class EngineSupervisor:
         log.info("Engine starting in %s mode (symbol=%s, risk=%.2f%%)",
                   self.settings.mode.upper(), self.settings.symbol,
                   self.settings.risk_pct * 100)
-        if self.settings.mode == "live":
-            from src.broker.mt5_adapter import MT5Adapter
-            login_mode = "attach" if not self.settings.mt5_login else "credential"
-            log.info("Connecting to MT5 in %s mode…", login_mode)
-            self.broker = MT5Adapter(self.settings)
+        # If pre-connect succeeded in __init__, reuse that broker.
+        if self.broker is None:
+            if self.settings.mode == "live":
+                from src.broker.mt5_adapter import MT5Adapter
+                login_mode = "attach" if not self.settings.mt5_login else "credential"
+                log.info("Connecting to MT5 in %s mode…", login_mode)
+                self.broker = MT5Adapter(self.settings)
+            else:
+                log.info("Paper broker initialised — replaying recent history")
+                self.broker = PaperAdapter(starting_equity=self.settings.starting_equity)
+            try:
+                self.broker.connect()
+            except Exception as exc:
+                log.error("Broker connection failed: %s", exc)
+                raise
         else:
-            log.info("Paper broker initialised — replaying recent history")
-            self.broker = PaperAdapter(starting_equity=self.settings.starting_equity)
-        try:
-            self.broker.connect()
-        except Exception as exc:
-            log.error("Broker connection failed: %s", exc)
-            raise
+            log.info("Re-using pre-connected broker (%s)",
+                      type(self.broker).__name__)
 
         with self._lock:
             self.engine = Engine(self.settings, self.broker,

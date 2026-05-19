@@ -195,6 +195,82 @@ def test_snapshot_includes_balance_from_broker(app):
     assert payload["balance"] == 75_000.0
 
 
+def test_paper_mode_does_not_eager_connect_to_broker(app):
+    """Paper mode skips eager connect — broker is None until Start is pressed.
+    This preserves the ticker `stale=True` behaviour on a freshly-loaded page."""
+    sup = app.config["SUPERVISOR"]
+    assert sup.broker is None
+
+
+def test_live_mode_attempts_eager_connect(tmp_path, caplog):
+    """Live mode tries to attach to MT5 on app init. The MetaTrader5 package
+    isn't installed on Linux, so the attempt fails gracefully with a warning."""
+    import logging
+    caplog.set_level(logging.WARNING)
+    s = Settings(
+        mt5_login=0, mt5_password="", mt5_server="", mt5_terminal_path="",
+        symbol="XAUUSD", starting_equity=100_000, risk_pct=0.03,
+        magic_number=1, mode="live", log_level="WARNING",
+        log_dir=tmp_path / "logs",
+        webapp_host="127.0.0.1",
+        comex_webhook_enabled=False,
+    )
+    app = create_app(s)
+    sup = app.config["SUPERVISOR"]
+    # On Linux without MT5, eager connect fails — broker stays None,
+    # and a warning is logged. On Windows with MT5 running, broker would
+    # be a connected MT5Adapter.
+    assert sup.broker is None
+    assert any("Eager MT5 pre-connect skipped" in r.message
+                for r in caplog.records)
+
+
+def test_backtest_handles_tz_aware_index(tmp_path):
+    """Regression for pandas 2.x error:
+    'Cannot pass a datetime or Timestamp with tzinfo with the tz parameter'.
+    Backtest now normalises tz-aware cutoff against the h4 index timezone."""
+    from datetime import date, datetime, timezone
+    from dataclasses import replace
+    from webapp.backtest import run_backtest
+    from src.data.feed import DataFeed
+    from tests.conftest import synthetic_daily, synthetic_h4
+    import pandas as pd
+
+    class _TzAwareFeed(DataFeed):
+        def __init__(self):
+            self._daily = synthetic_daily(date(2024, 7, 1), n=260)
+            # 4H index is tz-aware (matches what yfinance returns for intraday)
+            self._h4 = synthetic_h4(
+                datetime(2024, 7, 1, 13, 30, tzinfo=timezone.utc), n=260)
+            # The fixture index is already tz-aware via the timezone= datetimes
+        def daily(self, sym, end, lookback_days):
+            return self._daily.tail(lookback_days)
+        def h4(self, sym, end_utc, lookback_bars):
+            return self._h4.tail(lookback_bars)
+        def m15(self, sym, s, e):
+            return pd.DataFrame()
+
+    settings = Settings(
+        mt5_login=0, mt5_password="", mt5_server="", mt5_terminal_path="",
+        symbol="XAUUSD", starting_equity=100_000.0, risk_pct=0.03,
+        magic_number=1, mode="paper", log_level="WARNING",
+        log_dir=tmp_path / "logs", comex_webhook_enabled=False,
+    )
+    feed = _TzAwareFeed()
+
+    # Inject our stub feed by monkey-patching YFinanceFeed
+    import webapp.backtest as bt_mod
+    real = bt_mod.YFinanceFeed
+    bt_mod.YFinanceFeed = lambda: feed
+    try:
+        # Should NOT raise "Cannot pass a datetime or Timestamp with tzinfo…"
+        result = run_backtest(date(2024, 6, 20), date(2024, 6, 28), settings)
+        assert result is not None
+        # Doesn't matter whether trades happen — just that the tz comparison works
+    finally:
+        bt_mod.YFinanceFeed = real
+
+
 def test_circuit_breaker_uses_configured_threshold(monkeypatch):
     """The CircuitBreaker safety check honours settings.circuit_breaker_pct."""
     from datetime import datetime, timezone

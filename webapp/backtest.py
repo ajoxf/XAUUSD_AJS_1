@@ -165,14 +165,24 @@ def run_backtest(start: date, end: date, settings: Settings,
         if progress_cb is not None:
             progress_cb(idx / max(total, 1), trade_date)
 
-        # Build pre-market context using only data through previous day
-        prior = df[df.index < trade_date].tail(60)
-        if len(prior) < 51:
+        # Build pre-market context using only data through previous day.
+        # Need 201 bars for SMA200 + atr_long_period+1 — fetch with headroom.
+        history_needed = max(201, settings.atr_long_period + 1)
+        prior = df[df.index < trade_date].tail(history_needed + 20)
+        if len(prior) < history_needed:
             result.skipped_days += 1
             continue
-        # 4H closes up to session start of trade_date
+        # 4H closes up to session start of trade_date. session_start is
+        # already a tz-aware UTC datetime; pd.Timestamp() preserves the tz.
+        # Normalise both sides so the comparison works whether yfinance
+        # returns tz-aware or tz-naive index.
         session_start, _ = session_window_utc(trade_date)
-        h4_window = h4[h4.index < pd.Timestamp(session_start, tz="UTC")].tail(60)
+        cutoff = pd.Timestamp(session_start)
+        if h4.index.tz is None and cutoff.tz is not None:
+            cutoff = cutoff.tz_localize(None)
+        elif h4.index.tz is not None and cutoff.tz is None:
+            cutoff = cutoff.tz_localize("UTC")
+        h4_window = h4[h4.index < cutoff].tail(60)
         if len(h4_window) < 50:
             result.skipped_days += 1
             continue

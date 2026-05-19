@@ -53,7 +53,8 @@ class Engine:
         self.state.loss_counter.reset_for_new_day(today)
         self.state.closes_15m_post_tp1 = []
         try:
-            daily_df = self.feed.daily(self.settings.symbol, today, lookback_days=210)
+            history_needed = max(210, self.settings.atr_long_period + 11)
+            daily_df = self.feed.daily(self.settings.symbol, today, lookback_days=history_needed)
             session_start_utc, _ = session.session_window_utc(today)
             h4_df = self.feed.h4(self.settings.symbol, session_start_utc, lookback_bars=60)
             ctx = premarket.build_premarket(
