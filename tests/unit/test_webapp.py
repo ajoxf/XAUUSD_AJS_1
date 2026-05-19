@@ -109,6 +109,34 @@ def test_settings_dataclass_has_no_auth_fields():
     assert not hasattr(s, "secret_key")
 
 
+def test_circuit_breaker_pct_env_configurable(monkeypatch):
+    """CIRCUIT_BREAKER_PCT in .env overrides the default 0.30."""
+    monkeypatch.setenv("CIRCUIT_BREAKER_PCT", "0.10")
+    s = Settings.from_env()
+    assert s.circuit_breaker_pct == 0.10
+
+
+def test_circuit_breaker_pct_default(monkeypatch):
+    monkeypatch.delenv("CIRCUIT_BREAKER_PCT", raising=False)
+    s = Settings.from_env()
+    assert s.circuit_breaker_pct == 0.30
+
+
+def test_circuit_breaker_uses_configured_threshold(monkeypatch):
+    """The CircuitBreaker safety check honours settings.circuit_breaker_pct."""
+    from datetime import datetime, timezone
+    from src.strategy.safety import CircuitBreaker
+
+    monkeypatch.setenv("CIRCUIT_BREAKER_PCT", "0.10")
+    s = Settings.from_env()
+    cb = CircuitBreaker(starting_equity=100_000.0)
+    now = datetime.now(tz=timezone.utc)
+    # 8% drawdown — should NOT trigger at 10% threshold
+    assert not cb.check(92_000.0, s, now)
+    # 12% drawdown — should trigger
+    assert cb.check(88_000.0, s, now)
+
+
 def test_ticker_stale_when_no_broker(client):
     """Bot stopped → no broker connected → stale=True."""
     r = client.get("/api/ticker")

@@ -170,12 +170,47 @@ The receiver is implemented in Python stdlib only — no Flask required.
 - **MT5 deviation/slippage**: `max_slippage_per_oz` in settings is converted
   to MT5 points using `symbol_info.trade_tick_size`.
 
+## MT5 connection: attach vs credential mode
+
+The MT5 adapter has two ways to connect:
+
+**Attach mode (recommended for personal desktop use):**
+
+Leave `MT5_LOGIN` blank in `.env`. Start MetaTrader 5 manually, log in to
+your broker, and leave it running. The bot attaches to that running
+terminal — it never sees your broker password.
+
+```env
+MT5_LOGIN=
+MT5_PASSWORD=
+MT5_SERVER=
+```
+
+**Credential mode (for headless / unattended deployment):**
+
+Set `MT5_LOGIN`, `MT5_PASSWORD`, and `MT5_SERVER`. The bot logs MT5 in
+itself on each start. The password is stored in plaintext in `.env`
+(gitignored, but still on disk — set file permissions appropriately).
+
+```env
+MT5_LOGIN=12345678
+MT5_PASSWORD=your-password
+MT5_SERVER=ICMarketsSC-Demo
+```
+
+The bot picks attach vs credential mode automatically based on whether
+`MT5_LOGIN` is set.
+
 ## Live deployment checklist
 
 1. Run 60+ trades on demo via `MODE=paper`.
 2. Verify TP1 win rate is within 3pp of 64.6% target.
 3. Verify no calendar month exceeds 8% drawdown in demo.
-4. Tighten `circuit_breaker_pct` in `Settings` to 0.15 for go-live (overrides
-   the default 0.30 — wider production threshold).
-5. Switch `MODE=live` in `.env` and start under a process supervisor.
-6. Widen circuit breaker back to 0.30 after 100 live trades.
+4. Tighten the circuit breaker before going live: set
+   `CIRCUIT_BREAKER_PCT=0.10` in `.env` for the first 30 trades. Step up
+   gradually:
+   - Trades 1–30: `0.10` (very tight; one bad sequence will halt the bot)
+   - Trades 30–100: `0.15` (validating)
+   - Trades 100+: `0.30` (production default)
+5. Switch `MODE=live` in `.env` and start under a process supervisor
+   (Task Scheduler on Windows, systemd on Linux).

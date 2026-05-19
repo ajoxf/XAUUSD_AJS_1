@@ -25,19 +25,60 @@ class MT5Adapter(BrokerAdapter):
 
     # ── connection ───────────────────────────────────────
     def connect(self) -> None:
+        """Connect to MT5.
+
+        Attach mode (MT5_LOGIN blank or 0): attaches to whatever MT5 terminal
+        is currently running and logged in. The bot never sees the password.
+        Recommended for personal/desktop use.
+
+        Credential mode (MT5_LOGIN set): bot logs in itself using the stored
+        credentials. Required for headless/remote setups.
+        """
         path = self.settings.mt5_terminal_path or None
-        init_args = {"login": self.settings.mt5_login,
-                     "password": self.settings.mt5_password,
-                     "server": self.settings.mt5_server}
-        if path:
-            init_args["path"] = path
-        ok = mt5.initialize(**init_args)
-        if not ok:
-            err = mt5.last_error()
-            raise RuntimeError(f"MT5 initialize() failed: {err}")
+        login = self.settings.mt5_login
+
+        if not login:
+            # Attach mode — defer all auth to the running terminal
+            init_args = {}
+            if path:
+                init_args["path"] = path
+            ok = mt5.initialize(**init_args)
+            if not ok:
+                err = mt5.last_error()
+                raise RuntimeError(
+                    "MT5 attach mode failed — is the MT5 terminal running and "
+                    f"logged in? Error: {err}. Set MT5_LOGIN/MT5_PASSWORD/"
+                    "MT5_SERVER in .env to log in via the bot instead."
+                )
+            account = mt5.account_info()
+            if account is None:
+                mt5.shutdown()
+                raise RuntimeError(
+                    "MT5 attached but no account is logged in. Open MT5 and "
+                    "log in to your broker, then restart the bot."
+                )
+        else:
+            # Credential mode — bot performs the login
+            init_args = {"login": login,
+                         "password": self.settings.mt5_password,
+                         "server": self.settings.mt5_server}
+            if path:
+                init_args["path"] = path
+            ok = mt5.initialize(**init_args)
+            if not ok:
+                err = mt5.last_error()
+                raise RuntimeError(
+                    f"MT5 login failed for account {login} on "
+                    f"{self.settings.mt5_server}: {err}"
+                )
+
         info = mt5.symbol_info(self.settings.symbol)
         if info is None:
-            raise RuntimeError(f"Symbol {self.settings.symbol} not found on MT5")
+            mt5.shutdown()
+            raise RuntimeError(
+                f"Symbol '{self.settings.symbol}' not found on MT5. Check the "
+                "exact symbol name in Market Watch and update SYMBOL in .env."
+            )
         if not info.visible:
             mt5.symbol_select(self.settings.symbol, True)
         self._connected = True

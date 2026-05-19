@@ -54,7 +54,7 @@ class Settings:
     tranche_2_pct: float = 0.30
     breakeven_plus_pct: float = 0.30
     tp1_accel_pct: float = 0.80
-    circuit_breaker_pct: float = 0.30
+    circuit_breaker_pct: float = 0.30   # halt if equity drops this % from start
     consecutive_loss_pause: int = 7
     lot_step: float = 0.01
     contract_size: float = 100.0
@@ -79,4 +79,5 @@ class Settings:
             comex_webhook_port=int(os.getenv("COMEX_WEBHOOK_PORT", "5050")),
             comex_webhook_enabled=os.getenv("COMEX_WEBHOOK_ENABLED",
                                               "true").lower() in ("1", "true", "yes"),
+            circuit_breaker_pct=float(os.getenv("CIRCUIT_BREAKER_PCT", "0.30")),
         )
