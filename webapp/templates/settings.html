@@ -37,6 +37,28 @@
         </select>
       </div>
     </div>
+
+    <div class="row g-3 mt-2">
+      <div class="col-md-12">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch"
+                 id="require_trade_confirmation"
+                 name="require_trade_confirmation"
+                 value="true"
+                 {% if settings.require_trade_confirmation %}checked{% endif %}>
+          <label class="form-check-label" for="require_trade_confirmation">
+            <strong>Require operator confirmation before each trade</strong>
+          </label>
+        </div>
+        <div class="form-text">
+          When ON, every signal stages a pending trade on the dashboard
+          with full lot/SL/TP detail; orders are only sent after you
+          click <em>Confirm</em>. Plans auto-cancel after
+          {{ settings.pending_trade_max_age_seconds }} seconds.
+          Recommended for the first weeks of live trading.
+        </div>
+      </div>
+    </div>
   </div>
 </form>
 

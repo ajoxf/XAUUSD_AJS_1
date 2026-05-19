@@ -18,6 +18,7 @@ import pandas as pd
 
 from config.settings import Settings
 from src.broker.adapter import BrokerAdapter
+from src.broker.dryrun_adapter import DryRunAdapter
 from src.broker.paper_adapter import PaperAdapter
 from src.data.yfinance_feed import YFinanceFeed
 from src.engine.logger import StructuredLogger
@@ -43,6 +44,8 @@ class SupervisorSnapshot:
     today: Optional[date]
     premarket: Optional[Dict[str, Any]]
     position: Optional[Dict[str, Any]]
+    pending_trade: Optional[Dict[str, Any]]
+    require_trade_confirmation: bool
     week: Dict[str, Any]
     monitor: Dict[str, Any]
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
@@ -62,6 +65,8 @@ class SupervisorSnapshot:
             "today": self.today.isoformat() if self.today else None,
             "premarket": self.premarket,
             "position": self.position,
+            "pending_trade": self.pending_trade,
+            "require_trade_confirmation": self.require_trade_confirmation,
             "week": self.week,
             "monitor": self.monitor,
             "recent_events": self.recent_events,
@@ -99,6 +104,9 @@ class EngineSupervisor:
 
         - Live mode: attaches as the TRADING broker. When Start is pressed,
           the engine reuses this same connection.
+        - Dry-run mode: attaches as the TRADING broker, wrapped in a
+          DryRunAdapter — quotes/account come from MT5, orders are
+          simulated only.
         - Paper mode: attaches as a REFERENCE-ONLY broker. The PaperAdapter
           is still used for trade simulation. The dashboard prefers the
           reference broker's balance/equity so the user can see their real
@@ -116,6 +124,11 @@ class EngineSupervisor:
                 self.broker = adapter
                 log.info("Pre-connect to MT5 ✓ balance=$%.2f equity=$%.2f "
                           "(trading broker — press Start to begin)", bal, eq)
+            elif self.settings.mode == "dryrun":
+                self.broker = DryRunAdapter(adapter, symbol=self.settings.symbol)
+                log.info("DRY-RUN broker armed ✓ balance=$%.2f equity=$%.2f "
+                          "(real MT5 quotes; orders will be simulated only)",
+                          bal, eq)
             else:
                 self.reference_broker = adapter
                 log.info("MT5 reference attached ✓ balance=$%.2f equity=$%.2f "
@@ -125,6 +138,10 @@ class EngineSupervisor:
             if self.settings.mode == "live":
                 log.warning("Eager MT5 pre-connect skipped: %s "
                              "(start MT5 + log in, then press Start)", exc)
+                self.broker = None
+            elif self.settings.mode == "dryrun":
+                log.warning("Dry-run pre-connect skipped: %s "
+                             "(falling back to paper-broker quotes on Start)", exc)
                 self.broker = None
             else:
                 log.info("MT5 reference unavailable: %s "
@@ -162,9 +179,41 @@ class EngineSupervisor:
         self.status = "stopped"
 
     def update_settings(self, settings: Settings) -> None:
-        """Apply new settings — caller should ensure the engine is stopped."""
+        """Apply new settings. Most fields only take effect on the next
+        engine start, but a handful (require_trade_confirmation,
+        pending_trade_max_age_seconds, max_spread_per_oz,
+        max_slippage_per_oz) are safe to mutate live and we propagate
+        them to a running engine so the operator's toggle is felt
+        immediately."""
         with self._lock:
             self.settings = settings
+            if self.engine is not None:
+                self.engine.settings = settings
+
+    # ── Pending-trade controls ───────────────────────────
+    def confirm_pending_trade(self) -> Dict[str, Any]:
+        """Operator clicked Confirm on the dashboard. Returns a small
+        status dict the API can surface."""
+        with self._lock:
+            if self.engine is None:
+                return {"ok": False, "error": "engine not running"}
+            if self.engine.state.pending_trade is None:
+                return {"ok": False, "error": "no pending trade"}
+            try:
+                placed = self.engine.confirm_pending_trade()
+            except Exception as exc:
+                log.exception("confirm_pending_trade crashed")
+                return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            return {"ok": placed, "placed": placed}
+
+    def cancel_pending_trade(self) -> Dict[str, Any]:
+        with self._lock:
+            if self.engine is None:
+                return {"ok": False, "error": "engine not running"}
+            if self.engine.state.pending_trade is None:
+                return {"ok": False, "error": "no pending trade"}
+            cancelled = self.engine.cancel_pending_trade(reason="operator_cancel")
+            return {"ok": cancelled, "cancelled": cancelled}
 
     # ── Thread body ──────────────────────────────────────
     def _safe_run(self) -> None:
@@ -187,11 +236,29 @@ class EngineSupervisor:
                 login_mode = "attach" if not self.settings.mt5_login else "credential"
                 log.info("Connecting to MT5 in %s mode…", login_mode)
                 self.broker = MT5Adapter(self.settings)
+            elif self.settings.mode == "dryrun":
+                # Prefer real MT5 quotes; fall back to PaperAdapter if MT5
+                # unavailable so dry-run still runs offline.
+                try:
+                    from src.broker.mt5_adapter import MT5Adapter
+                    inner: BrokerAdapter = MT5Adapter(self.settings)
+                    inner.connect()
+                    log.info("Dry-run: real MT5 attached for quotes")
+                except Exception as exc:
+                    log.warning("Dry-run: MT5 unavailable (%s) — using paper "
+                                "broker for synthetic quotes", exc)
+                    inner = PaperAdapter(
+                        starting_equity=self.settings.starting_equity)
+                    inner.connect()
+                self.broker = DryRunAdapter(inner, symbol=self.settings.symbol)
             else:
                 log.info("Paper broker initialised — replaying recent history")
                 self.broker = PaperAdapter(starting_equity=self.settings.starting_equity)
             try:
-                self.broker.connect()
+                # DryRunAdapter.connect() is a no-op if inner already connected;
+                # MT5Adapter / PaperAdapter need it.
+                if not isinstance(self.broker, DryRunAdapter):
+                    self.broker.connect()
             except Exception as exc:
                 log.error("Broker connection failed: %s", exc)
                 raise
@@ -207,7 +274,7 @@ class EngineSupervisor:
                   self.broker.equity(),
                   self.settings.circuit_breaker_pct * 100)
 
-        if self.settings.mode == "live":
+        if self.settings.mode in ("live", "dryrun"):
             self._run_live_loop()
         else:
             self._run_paper_replay()
@@ -382,7 +449,7 @@ class EngineSupervisor:
         with self._lock:
             engine = self.engine
             equity, balance, balance_source = self._resolve_balance()
-            premarket = position = None
+            premarket = position = pending = None
             week: Dict[str, Any] = {}
             today = None
             peak = start_eq = self.settings.starting_equity
@@ -400,6 +467,8 @@ class EngineSupervisor:
                     premarket = _premarket_view(state.premarket)
                 if state.position is not None and not state.position.closed:
                     position = _position_view(state.position)
+                if state.pending_trade is not None:
+                    pending = _pending_trade_view(state.pending_trade)
                 week = _week_view(state)
                 mon = state.win_rate_monitor
                 monitor = {
@@ -420,7 +489,9 @@ class EngineSupervisor:
                 equity=equity, balance=balance, balance_source=balance_source,
                 starting_equity=start_eq, peak_equity=peak,
                 drawdown_pct=drawdown_pct, today=today, premarket=premarket,
-                position=position, week=week, monitor=monitor,
+                position=position, pending_trade=pending,
+                require_trade_confirmation=self.settings.require_trade_confirmation,
+                week=week, monitor=monitor,
                 recent_events=self._read_recent_events(recent_events_limit),
             )
 
@@ -432,6 +503,16 @@ class EngineSupervisor:
             try:
                 return (self.broker.equity(), self.broker.balance(),
                         "live · MT5 account")
+            except Exception:
+                pass
+        # 1b. Dry-run trading broker — show the wrapped MT5 account if real
+        if self.broker is not None and self.settings.mode == "dryrun":
+            try:
+                inner = getattr(self.broker, "inner", self.broker)
+                source = ("dryrun · MT5 quotes (no orders)"
+                          if inner.__class__.__name__ == "MT5Adapter"
+                          else "dryrun · simulated quotes (no orders)")
+                return (self.broker.equity(), self.broker.balance(), source)
             except Exception:
                 pass
         # 2. Reference MT5 broker (paper mode with MT5 reachable)
@@ -497,6 +578,28 @@ def _premarket_view(ctx) -> Dict[str, Any]:
         "event_blocked": ctx.event_blocked, "event_reason": ctx.event_reason,
         "seasonal_mult_long": ctx.seasonal_mult_long,
         "prev_session_close_type": ctx.prev_session_close_type,
+    }
+
+
+def _pending_trade_view(pt) -> Dict[str, Any]:
+    return {
+        "direction": pt.direction,
+        "entry_kind": pt.entry_kind,
+        "entry_price": round(pt.entry_price, 2),
+        "sl": round(pt.sl, 2),
+        "tp1": round(pt.tp1, 2),
+        "tp2": round(pt.tp2, 2),
+        "half_1_lots": pt.sizing.half_1,
+        "half_2_lots": pt.sizing.half_2,
+        "total_lots": pt.sizing.lots_final,
+        "risk_amount": round(pt.sizing.risk_amount, 2),
+        "actual_risk": round(pt.sizing.actual_risk, 2),
+        "active_risk_pct": round(pt.active_risk_pct * 100, 3),
+        "equity_at_decision": round(pt.equity_at_decision, 2),
+        "rounding_warning": pt.sizing.warning,
+        "rounding_deviation_pct": round(pt.sizing.deviation_pct, 2),
+        "created_at_utc": pt.created_at_utc.isoformat(),
+        "expires_at_utc": pt.expires_at_utc.isoformat(),
     }
 
 

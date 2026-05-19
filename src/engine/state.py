@@ -11,6 +11,27 @@ from src.strategy.exits import PositionState
 from src.strategy.premarket import PremarketContext
 from src.strategy.safety import (CircuitBreaker, ConsecutiveLossCounter,
                                   DailyTradeLock, WinRateMonitor)
+from src.strategy.sizing import SizingResult
+
+
+@dataclass
+class PendingTrade:
+    """A trade plan computed by the engine, waiting for operator approval.
+
+    All sizing and entry-price decisions were made at `created_at_utc`;
+    the orders won't reach the broker until `confirm_pending_trade()` is
+    called (or the plan expires)."""
+    direction: str                       # 'LONG' | 'SHORT'
+    entry_kind: str                      # 'CONTINUATION' | 'RETEST'
+    entry_price: float                   # ask (long) / bid (short) at decision time
+    sl: float
+    tp1: float
+    tp2: float
+    sizing: SizingResult
+    equity_at_decision: float
+    active_risk_pct: float
+    created_at_utc: datetime
+    expires_at_utc: datetime
 
 
 @dataclass
@@ -28,6 +49,11 @@ class EngineState:
 
     position: Optional[PositionState] = None
     tickets: List[OrderTicket] = field(default_factory=list)
+
+    # Set when require_trade_confirmation is on. While non-None, the
+    # engine refuses to evaluate new signals until the operator confirms
+    # or cancels — or the plan auto-expires.
+    pending_trade: Optional[PendingTrade] = None
 
     # v3.2 — carried context for Opt 2 (back-to-back TP2 extension)
     prev_session_close_type: Optional[str] = None

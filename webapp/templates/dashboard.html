@@ -80,6 +80,22 @@
 
 <div id="event-block-banner" class="alert alert-warning d-none"></div>
 
+<section id="pending-trade-banner" class="card mb-3 border-warning d-none">
+  <div class="card-header bg-warning-subtle">
+    <h2>⏳ Trade awaiting confirmation</h2>
+  </div>
+  <div class="card-body" id="pending-trade-body"></div>
+  <div class="card-footer d-flex gap-2">
+    <button id="btn-confirm-trade" class="btn btn-success">
+      ✓ Confirm &amp; place orders
+    </button>
+    <button id="btn-cancel-trade" class="btn btn-outline-danger">
+      ✕ Cancel trade
+    </button>
+    <span id="pending-trade-msg" class="ms-auto text-muted small"></span>
+  </div>
+</section>
+
 <section class="card mb-3">
   <div class="card-header"><h2 id="plan-date">Today's plan</h2></div>
   <div class="card-body" id="plan-body">

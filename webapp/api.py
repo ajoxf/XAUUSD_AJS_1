@@ -98,6 +98,25 @@ def stop_bot():
     return jsonify({"status": sup.status, "is_running": sup.is_running})
 
 
+@bp.post("/control/confirm_trade")
+def confirm_trade():
+    """Operator confirms the staged trade — orders go to the broker."""
+    sup = _supervisor()
+    result = sup.confirm_pending_trade()
+    status_code = 200 if result.get("ok") else 409
+    return jsonify(result), status_code
+
+
+@bp.post("/control/cancel_trade")
+def cancel_trade():
+    """Operator cancels the staged trade — the plan is discarded and
+    the bot returns to scanning for the next signal."""
+    sup = _supervisor()
+    result = sup.cancel_pending_trade()
+    status_code = 200 if result.get("ok") else 409
+    return jsonify(result), status_code
+
+
 # ── Settings ────────────────────────────────────────────
 @bp.get("/settings")
 def get_settings():
@@ -110,6 +129,8 @@ def get_settings():
         "mt5_login": s.mt5_login, "mt5_server": s.mt5_server,
         "mt5_terminal_path": s.mt5_terminal_path,
         "webapp_host": s.webapp_host, "webapp_port": s.webapp_port,
+        "require_trade_confirmation": s.require_trade_confirmation,
+        "pending_trade_max_age_seconds": s.pending_trade_max_age_seconds,
     })
 
 
@@ -129,6 +150,8 @@ def update_settings():
         mt5_password=str(data.get("mt5_password", s.mt5_password) or s.mt5_password),
         mt5_server=str(data.get("mt5_server", s.mt5_server)),
         mt5_terminal_path=str(data.get("mt5_terminal_path", s.mt5_terminal_path)),
+        require_trade_confirmation=_coerce_bool(
+            data.get("require_trade_confirmation", s.require_trade_confirmation)),
     )
     _save_env(Path(".env"), {
         "SYMBOL": new.symbol, "STARTING_EQUITY": new.starting_equity,
@@ -136,11 +159,20 @@ def update_settings():
         "MODE": new.mode, "LOG_LEVEL": new.log_level,
         "MT5_LOGIN": new.mt5_login, "MT5_PASSWORD": new.mt5_password,
         "MT5_SERVER": new.mt5_server, "MT5_TERMINAL_PATH": new.mt5_terminal_path,
+        "REQUIRE_TRADE_CONFIRMATION": "true" if new.require_trade_confirmation else "false",
     })
     current_app.config["SETTINGS"] = new
     sup = _supervisor()
     sup.update_settings(new)
     return jsonify({"ok": True})
+
+
+def _coerce_bool(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return False
+    return str(v).lower() in ("1", "true", "yes", "on")
 
 
 def _save_env(path: Path, updates: dict) -> None:

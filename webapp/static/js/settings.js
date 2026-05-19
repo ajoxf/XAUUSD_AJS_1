@@ -21,6 +21,10 @@
       obj.risk_pct = (parseFloat(obj.risk_pct_percent) / 100).toString();
       delete obj.risk_pct_percent;
     }
+    // Unchecked checkboxes are absent from FormData — send explicit booleans
+    // so the API can reliably toggle them off.
+    const confirmCb = document.getElementById("require_trade_confirmation");
+    if (confirmCb) obj.require_trade_confirmation = confirmCb.checked;
     try {
       const r = await fetch("/api/settings", {
         method: "POST",

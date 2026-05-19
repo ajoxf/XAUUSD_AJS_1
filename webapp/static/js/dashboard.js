@@ -356,10 +356,99 @@
     ].join("");
   }
 
+  function renderPendingTrade(snap) {
+    const banner = $("pending-trade-banner");
+    const pt = snap.pending_trade;
+    if (!pt) {
+      banner.classList.add("d-none");
+      return;
+    }
+    banner.classList.remove("d-none");
+    const dirClass = pt.direction === "LONG" ? "text-success" : "text-danger";
+    const dirArrow = pt.direction === "LONG" ? "▲" : "▼";
+    const expiresIn = (() => {
+      const ms = new Date(pt.expires_at_utc).getTime() - Date.now();
+      if (ms <= 0) return "expired";
+      return `${Math.max(1, Math.round(ms / 1000))}s`;
+    })();
+    const warn = pt.rounding_warning
+      ? `<div class="text-warning small">⚠️ Rounding deviation ${pt.rounding_deviation_pct}% — actual risk $${pt.actual_risk}</div>`
+      : "";
+    $("pending-trade-body").innerHTML = `
+      <div class="row g-2">
+        <div class="col-md-2"><div class="metric-card">
+          <div class="metric-label">Direction</div>
+          <div class="metric-value ${dirClass}">${dirArrow} ${pt.direction}</div>
+          <div class="metric-delta">${pt.entry_kind}</div>
+        </div></div>
+        <div class="col-md-2"><div class="metric-card">
+          <div class="metric-label">Entry (plan)</div>
+          <div class="metric-value">${App.fmtUsd(pt.entry_price)}</div>
+        </div></div>
+        <div class="col-md-2"><div class="metric-card">
+          <div class="metric-label">Stop</div>
+          <div class="metric-value text-danger">${App.fmtUsd(pt.sl)}</div>
+        </div></div>
+        <div class="col-md-2"><div class="metric-card">
+          <div class="metric-label">TP1 / TP2</div>
+          <div class="metric-value">${App.fmtUsd(pt.tp1)}</div>
+          <div class="metric-delta">${App.fmtUsd(pt.tp2)}</div>
+        </div></div>
+        <div class="col-md-2"><div class="metric-card">
+          <div class="metric-label">Lots (H1 + H2)</div>
+          <div class="metric-value">${pt.total_lots}</div>
+          <div class="metric-delta">${pt.half_1_lots} + ${pt.half_2_lots}</div>
+        </div></div>
+        <div class="col-md-2"><div class="metric-card">
+          <div class="metric-label">Risk</div>
+          <div class="metric-value">${App.fmtUsd(pt.risk_amount)}</div>
+          <div class="metric-delta">${pt.active_risk_pct}% of equity</div>
+        </div></div>
+      </div>
+      ${warn}
+      <div class="muted small mt-2">
+        Decision made at ${pt.created_at_utc.substring(11, 19)} UTC ·
+        expires in ${expiresIn} ·
+        re-checks spread at confirm
+      </div>`;
+  }
+
+  async function postControl(action) {
+    const btn = $(`btn-${action}-trade`);
+    const msg = $("pending-trade-msg");
+    if (btn) btn.disabled = true;
+    msg.textContent = "Sending…";
+    try {
+      const r = await fetch(`/api/control/${action}_trade`, { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        msg.textContent = body.error || `HTTP ${r.status}`;
+      } else if (action === "confirm" && body.placed === false) {
+        msg.textContent = "Orders were not placed — check the log.";
+      } else {
+        msg.textContent = action === "confirm" ? "Confirmed." : "Cancelled.";
+      }
+      App.fetchOnce();
+    } catch (e) {
+      msg.textContent = "Network error: " + e;
+    } finally {
+      setTimeout(() => { msg.textContent = ""; }, 4000);
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const c = $("btn-confirm-trade");
+    const x = $("btn-cancel-trade");
+    if (c) c.addEventListener("click", () => postControl("confirm"));
+    if (x) x.addEventListener("click", () => postControl("cancel"));
+  });
+
   App.onSnapshot(snap => {
     renderHeader(snap);
     renderLevels(snap);
     renderPlan(snap);
+    renderPendingTrade(snap);
     renderPosition(snap);
     renderWeek(snap);
     renderMonitors(snap);

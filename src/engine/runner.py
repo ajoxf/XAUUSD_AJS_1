@@ -5,7 +5,7 @@ v3.2: 50/50 exit, 20:55 UTC partial close, six return-enhancement opts.
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional, Sequence
 
 from config.flags import FLAGS
@@ -13,7 +13,7 @@ from config.settings import Settings
 from src.broker.adapter import BrokerAdapter, OrderSide
 from src.data.feed import DataFeed
 from src.engine.logger import StructuredLogger
-from src.engine.state import EngineState
+from src.engine.state import EngineState, PendingTrade
 from src.strategy import entry as entry_mod
 from src.strategy import exits, gates, premarket, session, sizing
 from src.strategy.comex_volume import ComexVolumeTracker
@@ -95,6 +95,13 @@ class Engine:
         if self.state.loss_counter.is_paused(self.state.today):
             return False
 
+        # If a previous signal is awaiting operator confirmation, refuse
+        # to evaluate a new one. Expire stale plans first so the bot
+        # doesn't get stuck if the operator stepped away.
+        self._expire_pending_trade_if_old(now_utc)
+        if self.state.pending_trade is not None:
+            return False
+
         gate_result = gates.check_all_gates(
             ctx, self.settings, now_utc, direction.value,
             self.state.daily_lock.has_fired(self.state.today),
@@ -152,29 +159,94 @@ class Engine:
             self.log.warn(f"Rounding deviation {sized.deviation_pct:.1f}% — "
                           f"actual ${sized.actual_risk:.2f} vs intended ${sized.risk_amount:.2f}")
 
-        side = OrderSide.BUY if direction == Direction.LONG else OrderSide.SELL
         sl = ctx.long_sl if direction == Direction.LONG else ctx.short_sl
         tp1 = ctx.long_tp1 if direction == Direction.LONG else ctx.short_tp1
         tp2 = ctx.long_tp2 if direction == Direction.LONG else ctx.short_tp2
 
+        # If operator confirmation is required, stage the trade and bail
+        # out before any orders reach the broker. The dashboard will
+        # surface the pending plan and call confirm_pending_trade() once
+        # the user clicks Confirm.
+        if self.settings.require_trade_confirmation:
+            expires = now_utc + timedelta(
+                seconds=self.settings.pending_trade_max_age_seconds)
+            self.state.pending_trade = PendingTrade(
+                direction=direction.value,
+                entry_kind=entry_kind,
+                entry_price=entry_price,
+                sl=sl, tp1=tp1, tp2=tp2,
+                sizing=sized,
+                equity_at_decision=equity,
+                active_risk_pct=active_risk,
+                created_at_utc=now_utc,
+                expires_at_utc=expires,
+            )
+            self.log.event("trade_pending_confirmation", {
+                "direction": direction.value, "entry_kind": entry_kind,
+                "entry_price": entry_price, "sl": sl, "tp1": tp1, "tp2": tp2,
+                "half_1_lots": sized.half_1, "half_2_lots": sized.half_2,
+                "risk_amount": sized.risk_amount,
+                "actual_risk": sized.actual_risk,
+                "expires_at_utc": expires.isoformat(),
+            })
+            return True
+
+        return self._place_orders(
+            now_utc=now_utc, direction=direction, entry_kind=entry_kind,
+            confirmation_candle=confirmation_candle,
+            entry_price=entry_price, sl=sl, tp1=tp1, tp2=tp2,
+            half_1_lots=sized.half_1, half_2_lots=sized.half_2,
+            sized=sized, active_risk=active_risk, equity=equity,
+        )
+
+    def _place_orders(
+        self, now_utc: datetime, direction: Direction, entry_kind: str,
+        confirmation_candle: Optional[Candle],
+        entry_price: float, sl: float, tp1: float, tp2: float,
+        half_1_lots: float, half_2_lots: float,
+        sized: "sizing.SizingResult", active_risk: float, equity: float,
+    ) -> bool:
+        ctx = self.state.premarket
+        side = OrderSide.BUY if direction == Direction.LONG else OrderSide.SELL
+
         # v3.2 — 50/50 split: open ONE order, partial-close at TP1
         half_specs = [
-            ("H1", sized.half_1, tp1),
-            ("H2", sized.half_2, tp2),
+            ("H1", half_1_lots, tp1),
+            ("H2", half_2_lots, tp2),
         ]
         tickets = []
         tranche_states: List[TrancheState] = []
         for name, lots, tp in half_specs:
             if lots < self.settings.lot_step:
                 continue
-            ticket = self.broker.open_market(
-                symbol=self.settings.symbol, side=side, volume_lots=lots,
-                sl=sl, tp=tp, comment=f"v3.2 {name}",
-                magic=self.settings.magic_number,
-                max_slippage_per_oz=self.settings.max_slippage_per_oz,
-            )
+            try:
+                ticket = self.broker.open_market(
+                    symbol=self.settings.symbol, side=side, volume_lots=lots,
+                    sl=sl, tp=tp, comment=f"v3.2 {name}",
+                    magic=self.settings.magic_number,
+                    max_slippage_per_oz=self.settings.max_slippage_per_oz,
+                )
+            except Exception as exc:
+                self.log.warn(f"Broker rejected {name}: {exc}")
+                # Roll back any successfully-placed legs so we don't leave a
+                # half-opened position on the wire.
+                for t in tickets:
+                    try:
+                        self.broker.close(t, t.volume_lots)
+                    except Exception as roll_exc:
+                        self.log.warn(
+                            f"Rollback close failed for {t.broker_id}: {roll_exc}")
+                self.log.event("trade_rejected", {
+                    "direction": direction.value, "tranche": name,
+                    "lots": lots, "error": str(exc),
+                })
+                return False
             tickets.append(ticket)
             tranche_states.append(TrancheState(name=name, lots=lots))
+
+        if not tickets:
+            self.log.warn("No tranche met lot_step minimum — entry skipped")
+            return False
 
         position = PositionState(
             direction=direction.value,
@@ -195,11 +267,13 @@ class Engine:
         self.state.daily_lock.mark_fired(self.state.today)
         self.state.week_trades += 1
 
+        body_ratio = (entry_mod._body_ratio(confirmation_candle)
+                      if confirmation_candle is not None else None)
         self.log.event("trade_open", {
             "direction": direction.value,
             "entry_kind": entry_kind,
             "entry_price": entry_price,
-            "candle_body_ratio": entry_mod._body_ratio(confirmation_candle),
+            "candle_body_ratio": body_ratio,
             "sl": sl, "tp1": tp1, "tp2": tp2,
             "tp2_fib": ctx.long_tp2_fib if direction == Direction.LONG else ctx.short_tp2_fib,
             "back_to_back_active": ctx.back_to_back_active,
@@ -211,6 +285,66 @@ class Engine:
             "tickets": [t.broker_id for t in tickets],
         })
         return True
+
+    # ── Operator confirmation ─────────────────────────────
+    def confirm_pending_trade(self, now_utc: Optional[datetime] = None) -> bool:
+        """Place orders for the staged trade. Returns True on success.
+
+        Re-checks the live spread before sending — drift while the operator
+        was deciding can make the trade no longer safe."""
+        plan = self.state.pending_trade
+        if plan is None:
+            return False
+        now_utc = now_utc or datetime.now(tz=timezone.utc)
+        if now_utc >= plan.expires_at_utc:
+            self.cancel_pending_trade(reason="expired", now_utc=now_utc)
+            return False
+
+        quote = self.broker.quote(self.settings.symbol)
+        if quote.spread > self.settings.max_spread_per_oz:
+            self.log.warn(f"Spread {quote.spread:.2f} > max at confirm — "
+                          f"cancelling pending trade")
+            self.cancel_pending_trade(reason="spread_too_wide_at_confirm",
+                                       now_utc=now_utc)
+            return False
+
+        direction = Direction.LONG if plan.direction == "LONG" else Direction.SHORT
+        # Re-snap the entry price to the current quote; the plan's price was
+        # captured at signal time and is now stale.
+        entry_price = quote.ask if direction == Direction.LONG else quote.bid
+
+        self.state.pending_trade = None
+        self.log.event("trade_confirmed", {
+            "direction": plan.direction, "entry_kind": plan.entry_kind,
+            "plan_price": plan.entry_price, "fill_price": entry_price,
+            "spread_at_confirm": quote.spread,
+            "age_seconds": (now_utc - plan.created_at_utc).total_seconds(),
+        })
+        return self._place_orders(
+            now_utc=now_utc, direction=direction, entry_kind=plan.entry_kind,
+            confirmation_candle=None,
+            entry_price=entry_price, sl=plan.sl, tp1=plan.tp1, tp2=plan.tp2,
+            half_1_lots=plan.sizing.half_1, half_2_lots=plan.sizing.half_2,
+            sized=plan.sizing, active_risk=plan.active_risk_pct,
+            equity=plan.equity_at_decision,
+        )
+
+    def cancel_pending_trade(self, reason: str = "operator_cancel",
+                              now_utc: Optional[datetime] = None) -> bool:
+        plan = self.state.pending_trade
+        if plan is None:
+            return False
+        self.state.pending_trade = None
+        self.log.event("trade_cancelled", {
+            "direction": plan.direction, "entry_kind": plan.entry_kind,
+            "entry_price": plan.entry_price, "reason": reason,
+        })
+        return True
+
+    def _expire_pending_trade_if_old(self, now_utc: datetime) -> None:
+        plan = self.state.pending_trade
+        if plan is not None and now_utc >= plan.expires_at_utc:
+            self.cancel_pending_trade(reason="expired", now_utc=now_utc)
 
     # ── Tick handler ──────────────────────────────────────
     def on_tick(self, tick_price: float, now_utc: datetime) -> None:

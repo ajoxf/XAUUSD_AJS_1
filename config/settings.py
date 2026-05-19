@@ -31,6 +31,13 @@ class Settings:
     log_level: str
     log_dir: Path
 
+    # When True, the engine stages each trade as a pending decision and
+    # waits for the operator to Confirm or Cancel from the dashboard
+    # before any order is sent. Lapses to auto-cancel after
+    # pending_trade_max_age_seconds.
+    require_trade_confirmation: bool = False
+    pending_trade_max_age_seconds: int = 300
+
     # Web UI
     webapp_host: str = "127.0.0.1"
     webapp_port: int = 8080
@@ -84,4 +91,10 @@ class Settings:
             circuit_breaker_pct=float(os.getenv("CIRCUIT_BREAKER_PCT", "0.30")),
             atr_short_period=int(os.getenv("ATR_SHORT_PERIOD", "20")),
             atr_long_period=int(os.getenv("ATR_LONG_PERIOD", "50")),
+            require_trade_confirmation=os.getenv(
+                "REQUIRE_TRADE_CONFIRMATION", "false"
+            ).lower() in ("1", "true", "yes"),
+            pending_trade_max_age_seconds=int(
+                os.getenv("PENDING_TRADE_MAX_AGE_SECONDS", "300")
+            ),
         )
