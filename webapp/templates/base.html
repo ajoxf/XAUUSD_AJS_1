@@ -42,6 +42,18 @@
         <button id="btn-start" class="btn btn-success btn-sm">▶ Start</button>
         <button id="btn-stop" class="btn btn-outline-danger btn-sm" disabled>■ Stop</button>
       </div>
+      <div class="algo-switch mt-2">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch"
+                 id="algo-toggle">
+          <label class="form-check-label" for="algo-toggle">
+            <span id="algo-toggle-label">Algo enabled</span>
+          </label>
+        </div>
+        <div class="muted small" id="algo-toggle-hint">
+          New entries gated. Positions still managed.
+        </div>
+      </div>
       <div class="mt-2 sidebar-stats">
         <div><span class="label">Equity</span>
              <span class="value" id="stat-equity">—</span></div>

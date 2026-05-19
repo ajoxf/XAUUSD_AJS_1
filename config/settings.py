@@ -31,6 +31,13 @@ class Settings:
     log_level: str
     log_dir: Path
 
+    # Master kill switch for new entries. When False, the engine keeps
+    # running so existing positions are still managed (trail, TP1/TP2,
+    # session close), but signal evaluation is skipped so no NEW trades
+    # are opened. Independent of Start/Stop — flipping this does NOT
+    # tear down the engine thread.
+    algo_enabled: bool = True
+
     # When True, the engine stages each trade as a pending decision and
     # waits for the operator to Confirm or Cancel from the dashboard
     # before any order is sent. Lapses to auto-cancel after
@@ -91,6 +98,8 @@ class Settings:
             circuit_breaker_pct=float(os.getenv("CIRCUIT_BREAKER_PCT", "0.30")),
             atr_short_period=int(os.getenv("ATR_SHORT_PERIOD", "20")),
             atr_long_period=int(os.getenv("ATR_LONG_PERIOD", "50")),
+            algo_enabled=os.getenv("ALGO_ENABLED", "true").lower()
+                in ("1", "true", "yes"),
             require_trade_confirmation=os.getenv(
                 "REQUIRE_TRADE_CONFIRMATION", "false"
             ).lower() in ("1", "true", "yes"),

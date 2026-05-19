@@ -89,6 +89,13 @@ class Engine:
         if ctx is None:
             return False
 
+        if not self.settings.algo_enabled:
+            self.log.event("algo_disabled_skip", {
+                "direction": direction.value,
+                "reason": "algo kill switch is OFF",
+            })
+            return False
+
         if self.state.circuit_breaker.triggered:
             self.log.warn("Trading halted by circuit breaker")
             return False
@@ -296,6 +303,9 @@ class Engine:
         if plan is None:
             return False
         now_utc = now_utc or datetime.now(tz=timezone.utc)
+        if not self.settings.algo_enabled:
+            self.cancel_pending_trade(reason="algo_disabled", now_utc=now_utc)
+            return False
         if now_utc >= plan.expires_at_utc:
             self.cancel_pending_trade(reason="expired", now_utc=now_utc)
             return False

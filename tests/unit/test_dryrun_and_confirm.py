@@ -397,3 +397,118 @@ class TestWebappPendingTrade:
         assert r.status_code == 200
         assert b"require_trade_confirmation" in r.data
         assert b"Require operator confirmation" in r.data
+
+
+# ── Algo kill switch ─────────────────────────────────────────────────
+class TestAlgoKillSwitch:
+    def test_signal_blocked_when_algo_disabled(self, tmp_path):
+        engine, broker, settings, td = _make_engine(tmp_path)
+        engine.settings = replace(settings, algo_enabled=False)
+        ctx = engine.start_day(td)
+        broker.set_quote(mid=ctx.long_entry + 0.05,
+                          time_utc=ctx.session_start_utc + timedelta(minutes=30))
+        conf, nxt = _confirmation_signal(ctx)
+        fired = engine.evaluate_signal(
+            now_utc=ctx.session_start_utc + timedelta(minutes=30),
+            direction=Direction.LONG,
+            confirmation_candle=conf, next_candle=nxt,
+            closes_15m=_long_zone_closes(),
+        )
+        assert not fired
+        assert engine.state.position is None
+        assert broker.fills == []
+
+    def test_signal_fires_when_re_enabled(self, tmp_path):
+        engine, broker, settings, td = _make_engine(tmp_path)
+        engine.settings = replace(settings, algo_enabled=False)
+        ctx = engine.start_day(td)
+        broker.set_quote(mid=ctx.long_entry + 0.05,
+                          time_utc=ctx.session_start_utc + timedelta(minutes=30))
+        conf, nxt = _confirmation_signal(ctx)
+        # Disabled — no fire
+        engine.evaluate_signal(
+            now_utc=ctx.session_start_utc + timedelta(minutes=30),
+            direction=Direction.LONG, confirmation_candle=conf,
+            next_candle=nxt, closes_15m=_long_zone_closes(),
+        )
+        assert engine.state.position is None
+        # Flip ON
+        engine.settings = replace(engine.settings, algo_enabled=True)
+        fired = engine.evaluate_signal(
+            now_utc=ctx.session_start_utc + timedelta(minutes=31),
+            direction=Direction.LONG, confirmation_candle=conf,
+            next_candle=nxt, closes_15m=_long_zone_closes(),
+        )
+        assert fired
+        assert engine.state.position is not None
+
+    def test_confirm_pending_blocked_when_algo_disabled(self, tmp_path):
+        engine, broker, settings, td = _make_engine(
+            tmp_path, require_confirm=True)
+        ctx = engine.start_day(td)
+        broker.set_quote(mid=ctx.long_entry + 0.05,
+                          time_utc=ctx.session_start_utc + timedelta(minutes=30))
+        conf, nxt = _confirmation_signal(ctx)
+        engine.evaluate_signal(
+            now_utc=ctx.session_start_utc + timedelta(minutes=30),
+            direction=Direction.LONG, confirmation_candle=conf,
+            next_candle=nxt, closes_15m=_long_zone_closes(),
+        )
+        assert engine.state.pending_trade is not None
+        # Flip kill switch OFF
+        engine.settings = replace(engine.settings, algo_enabled=False)
+        placed = engine.confirm_pending_trade(
+            now_utc=ctx.session_start_utc + timedelta(minutes=31))
+        assert not placed
+        assert engine.state.pending_trade is None
+        assert engine.state.position is None
+        assert broker.fills == []
+
+
+class TestAlgoToggleApi:
+    def test_toggle_endpoint_flips_setting(self, app):
+        client = app.test_client()
+        r = client.post("/api/control/algo", json={"enabled": False})
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["ok"] is True
+        assert body["algo_enabled"] is False
+        # Reflected in /api/settings
+        data = client.get("/api/settings").get_json()
+        assert data["algo_enabled"] is False
+        # And /api/status
+        snap = client.get("/api/status").get_json()
+        assert snap["algo_enabled"] is False
+
+    def test_toggle_endpoint_400_without_body(self, app):
+        client = app.test_client()
+        r = client.post("/api/control/algo", json={})
+        assert r.status_code == 400
+
+    def test_toggle_propagates_to_running_engine(self, app, tmp_path):
+        sup = app.config["SUPERVISOR"]
+        engine, broker, _settings, _td = _make_engine(tmp_path)
+        sup.engine = engine
+        sup.broker = broker
+        client = app.test_client()
+        r = client.post("/api/control/algo", json={"enabled": False})
+        assert r.status_code == 200
+        # Engine's own settings reference now sees the kill switch
+        assert engine.settings.algo_enabled is False
+        # Flip back
+        client.post("/api/control/algo", json={"enabled": True})
+        assert engine.settings.algo_enabled is True
+
+    def test_sidebar_has_algo_toggle(self, app):
+        """Sidebar lives in base.html so it shows on every page."""
+        client = app.test_client()
+        for path in ("/", "/settings", "/backtest", "/logs"):
+            r = client.get(path)
+            assert r.status_code == 200
+            assert b'id="algo-toggle"' in r.data, f"missing on {path}"
+
+    def test_settings_page_has_algo_toggle(self, app):
+        client = app.test_client()
+        r = client.get("/settings")
+        assert b"algo_enabled" in r.data
+        assert b"Algo enabled" in r.data

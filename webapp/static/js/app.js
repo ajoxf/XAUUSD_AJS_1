@@ -35,6 +35,31 @@ const App = (function () {
     const stop = document.getElementById("btn-stop");
     if (start) start.disabled = snap.status === "running" || snap.status === "starting";
     if (stop) stop.disabled = snap.status === "stopped" || snap.status === "completed";
+
+    // Algo kill switch — independent of Start/Stop
+    const algoToggle = document.getElementById("algo-toggle");
+    const algoLabel = document.getElementById("algo-toggle-label");
+    const algoHint = document.getElementById("algo-toggle-hint");
+    if (algoToggle && typeof snap.algo_enabled === "boolean") {
+      if (!algoToggle.dataset.armed) {
+        algoToggle.checked = snap.algo_enabled;
+      } else {
+        // Server is the source of truth — re-sync if it diverged
+        algoToggle.checked = snap.algo_enabled;
+      }
+      if (algoLabel) {
+        algoLabel.textContent = snap.algo_enabled
+          ? "Algo enabled"
+          : "🛑 Algo DISABLED";
+        algoLabel.className = snap.algo_enabled ? "" : "text-danger fw-bold";
+      }
+      if (algoHint) {
+        algoHint.textContent = snap.algo_enabled
+          ? "Scanning for new entries."
+          : "New entries blocked. Open positions still managed.";
+      }
+    }
+
     const eb = document.getElementById("error-banner");
     if (eb) {
       if (snap.last_error) {
@@ -93,11 +118,34 @@ const App = (function () {
     await fetchOnce();
   }
 
+  async function setAlgo(enabled) {
+    try {
+      const r = await fetch("/api/control/algo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!r.ok) {
+        const body = await r.text();
+        alert(`Algo toggle failed: ${body}`);
+        return;
+      }
+      await fetchOnce();
+    } catch (e) {
+      alert("Algo toggle network error: " + e);
+    }
+  }
+
   function wireControls() {
     const start = document.getElementById("btn-start");
     const stop = document.getElementById("btn-stop");
     if (start) start.addEventListener("click", () => control("start"));
     if (stop) stop.addEventListener("click", () => control("stop"));
+    const algoToggle = document.getElementById("algo-toggle");
+    if (algoToggle) {
+      algoToggle.dataset.armed = "1";
+      algoToggle.addEventListener("change", () => setAlgo(algoToggle.checked));
+    }
   }
 
   function onSnapshot(fn) {

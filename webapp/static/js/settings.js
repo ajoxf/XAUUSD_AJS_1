@@ -25,6 +25,8 @@
     // so the API can reliably toggle them off.
     const confirmCb = document.getElementById("require_trade_confirmation");
     if (confirmCb) obj.require_trade_confirmation = confirmCb.checked;
+    const algoCb = document.getElementById("algo_enabled_settings");
+    if (algoCb) obj.algo_enabled = algoCb.checked;
     try {
       const r = await fetch("/api/settings", {
         method: "POST",

@@ -45,6 +45,7 @@ class SupervisorSnapshot:
     premarket: Optional[Dict[str, Any]]
     position: Optional[Dict[str, Any]]
     pending_trade: Optional[Dict[str, Any]]
+    algo_enabled: bool
     require_trade_confirmation: bool
     week: Dict[str, Any]
     monitor: Dict[str, Any]
@@ -66,6 +67,7 @@ class SupervisorSnapshot:
             "premarket": self.premarket,
             "position": self.position,
             "pending_trade": self.pending_trade,
+            "algo_enabled": self.algo_enabled,
             "require_trade_confirmation": self.require_trade_confirmation,
             "week": self.week,
             "monitor": self.monitor,
@@ -189,6 +191,20 @@ class EngineSupervisor:
             self.settings = settings
             if self.engine is not None:
                 self.engine.settings = settings
+
+    # ── Algo kill switch ─────────────────────────────────
+    def set_algo_enabled(self, enabled: bool) -> Dict[str, Any]:
+        """Flip the master kill switch for new entries. Engine keeps
+        running so existing positions stay managed; only signal
+        evaluation is gated."""
+        from dataclasses import replace as _replace
+        with self._lock:
+            self.settings = _replace(self.settings, algo_enabled=bool(enabled))
+            if self.engine is not None:
+                self.engine.settings = self.settings
+            log.info("Algo kill switch flipped %s",
+                      "ON" if enabled else "OFF")
+            return {"ok": True, "algo_enabled": self.settings.algo_enabled}
 
     # ── Pending-trade controls ───────────────────────────
     def confirm_pending_trade(self) -> Dict[str, Any]:
@@ -490,6 +506,7 @@ class EngineSupervisor:
                 starting_equity=start_eq, peak_equity=peak,
                 drawdown_pct=drawdown_pct, today=today, premarket=premarket,
                 position=position, pending_trade=pending,
+                algo_enabled=self.settings.algo_enabled,
                 require_trade_confirmation=self.settings.require_trade_confirmation,
                 week=week, monitor=monitor,
                 recent_events=self._read_recent_events(recent_events_limit),

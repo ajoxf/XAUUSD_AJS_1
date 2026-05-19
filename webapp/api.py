@@ -98,6 +98,25 @@ def stop_bot():
     return jsonify({"status": sup.status, "is_running": sup.is_running})
 
 
+@bp.post("/control/algo")
+def toggle_algo():
+    """Master kill switch for new entries. Body: {"enabled": bool}.
+    Independent of Start/Stop — flipping this does NOT tear down the
+    engine, so open positions stay managed."""
+    sup = _supervisor()
+    data = request.get_json(silent=True) or request.form.to_dict()
+    if "enabled" not in data:
+        return jsonify({"ok": False, "error": "missing 'enabled'"}), 400
+    enabled = _coerce_bool(data["enabled"])
+    result = sup.set_algo_enabled(enabled)
+    # Persist so the choice survives a restart.
+    s = current_app.config["SETTINGS"]
+    new = replace(s, algo_enabled=enabled)
+    current_app.config["SETTINGS"] = new
+    _save_env(Path(".env"), {"ALGO_ENABLED": "true" if enabled else "false"})
+    return jsonify(result)
+
+
 @bp.post("/control/confirm_trade")
 def confirm_trade():
     """Operator confirms the staged trade — orders go to the broker."""
@@ -129,6 +148,7 @@ def get_settings():
         "mt5_login": s.mt5_login, "mt5_server": s.mt5_server,
         "mt5_terminal_path": s.mt5_terminal_path,
         "webapp_host": s.webapp_host, "webapp_port": s.webapp_port,
+        "algo_enabled": s.algo_enabled,
         "require_trade_confirmation": s.require_trade_confirmation,
         "pending_trade_max_age_seconds": s.pending_trade_max_age_seconds,
     })
@@ -152,6 +172,7 @@ def update_settings():
         mt5_terminal_path=str(data.get("mt5_terminal_path", s.mt5_terminal_path)),
         require_trade_confirmation=_coerce_bool(
             data.get("require_trade_confirmation", s.require_trade_confirmation)),
+        algo_enabled=_coerce_bool(data.get("algo_enabled", s.algo_enabled)),
     )
     _save_env(Path(".env"), {
         "SYMBOL": new.symbol, "STARTING_EQUITY": new.starting_equity,
@@ -160,6 +181,7 @@ def update_settings():
         "MT5_LOGIN": new.mt5_login, "MT5_PASSWORD": new.mt5_password,
         "MT5_SERVER": new.mt5_server, "MT5_TERMINAL_PATH": new.mt5_terminal_path,
         "REQUIRE_TRADE_CONFIRMATION": "true" if new.require_trade_confirmation else "false",
+        "ALGO_ENABLED": "true" if new.algo_enabled else "false",
     })
     current_app.config["SETTINGS"] = new
     sup = _supervisor()
