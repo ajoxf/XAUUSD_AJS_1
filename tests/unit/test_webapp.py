@@ -138,3 +138,38 @@ def test_refuses_public_bind_without_password(tmp_path):
     )
     with pytest.raises(RuntimeError, match="Refusing"):
         create_app(s)
+
+
+@pytest.fixture
+def open_app(tmp_path):
+    """App with no password — auth fully disabled on localhost."""
+    s = Settings(
+        mt5_login=0, mt5_password="", mt5_server="", mt5_terminal_path="",
+        symbol="XAUUSD", starting_equity=100_000.0, risk_pct=0.03,
+        magic_number=20260101,
+        mode="paper", log_level="WARNING", log_dir=tmp_path / "logs",
+        webapp_host="127.0.0.1", admin_password="",
+        comex_webhook_enabled=False,
+    )
+    app = create_app(s)
+    app.config["TESTING"] = True
+    return app
+
+
+def test_open_localhost_no_password_skips_auth(open_app):
+    """No ADMIN_PASSWORD set + localhost bind → no auth prompt, direct access."""
+    c = open_app.test_client()
+    r = c.get("/")
+    assert r.status_code == 200
+    assert b"Dashboard" in r.data
+    r = c.get("/api/status")
+    assert r.status_code == 200
+    r = c.get("/api/flags")
+    assert r.status_code == 200
+
+
+def test_open_localhost_post_endpoints_also_open(open_app):
+    """Mutating endpoints also open when no password — matches dashboard buttons."""
+    c = open_app.test_client()
+    r = c.post("/api/flags", json={"OPT_5_WEDNESDAY_ACCEL": True})
+    assert r.status_code == 200
