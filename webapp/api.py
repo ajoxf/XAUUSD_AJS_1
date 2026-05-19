@@ -242,6 +242,38 @@ def get_logs():
     return jsonify({"events": list(reversed(events))})
 
 
+# ── Live ticker ─────────────────────────────────────────
+@bp.get("/ticker")
+def ticker():
+    """Current bid / ask / spread. Polled at 300ms from the dashboard.
+
+    Returns `stale=True` if no broker is connected (bot stopped) or if the
+    broker call fails. Includes `max_spread` so the client can colour-code.
+    """
+    sup = _supervisor()
+    s = _settings()
+    payload = {
+        "symbol": s.symbol,
+        "max_spread": s.max_spread_per_oz,
+        "stale": True,
+        "bid": None, "ask": None, "spread": None, "mid": None,
+        "time": None, "error": None,
+    }
+    if sup.broker is None:
+        payload["error"] = "broker not initialised"
+        return jsonify(payload)
+    try:
+        q = sup.broker.quote(s.symbol)
+        payload.update({
+            "bid": q.bid, "ask": q.ask, "spread": q.spread, "mid": q.mid,
+            "time": q.time_utc.isoformat(),
+            "stale": False,
+        })
+    except Exception as exc:
+        payload["error"] = f"{type(exc).__name__}: {exc}"
+    return jsonify(payload)
+
+
 # ── Health ──────────────────────────────────────────────
 @bp.get("/health")
 def health():

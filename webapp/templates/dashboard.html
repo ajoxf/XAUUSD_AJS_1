@@ -6,6 +6,37 @@
   <div class="muted" id="last-update">Connecting…</div>
 </div>
 
+<section class="ticker" id="ticker">
+  <div class="ticker-symbol">
+    <span class="ticker-sym">{{ symbol }}</span>
+    <span class="ticker-state" id="ticker-state">connecting…</span>
+  </div>
+  <div class="ticker-prices">
+    <div class="ticker-cell">
+      <div class="ticker-label">BID</div>
+      <div class="ticker-value" id="ticker-bid">—</div>
+    </div>
+    <div class="ticker-cell">
+      <div class="ticker-label">ASK</div>
+      <div class="ticker-value" id="ticker-ask">—</div>
+    </div>
+    <div class="ticker-cell">
+      <div class="ticker-label">SPREAD</div>
+      <div class="ticker-value" id="ticker-spread">—</div>
+      <div class="ticker-sub" id="ticker-spread-limit"></div>
+    </div>
+    <div class="ticker-cell">
+      <div class="ticker-label">MID</div>
+      <div class="ticker-value" id="ticker-mid">—</div>
+    </div>
+    <div class="ticker-cell ticker-cell-time">
+      <div class="ticker-label">QUOTE TIME</div>
+      <div class="ticker-value ticker-value-sm" id="ticker-time">—</div>
+      <div class="ticker-sub" id="ticker-age">—</div>
+    </div>
+  </div>
+</section>
+
 <div class="row g-3 mb-3">
   <div class="col"><div class="metric-card">
       <div class="metric-label">Equity</div>

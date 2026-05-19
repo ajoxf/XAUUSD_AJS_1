@@ -1,7 +1,104 @@
-/* Dashboard: render snapshots in real time. */
+/* Dashboard: render snapshots in real time + live ticker poller. */
 
 (function () {
   const $ = id => document.getElementById(id);
+
+  // ── Live ticker (300ms polling) ──────────────────────
+  let lastBid = null, lastAsk = null;
+  let tickerErrors = 0;
+
+  function fmt(v) {
+    if (v == null) return "—";
+    return Number(v).toFixed(2);
+  }
+
+  function flash(el, direction) {
+    el.classList.remove("tick-up", "tick-down");
+    void el.offsetWidth;   // force reflow so the next class re-triggers transition
+    el.classList.add(direction === "up" ? "tick-up" : "tick-down");
+    setTimeout(() => el.classList.remove("tick-up", "tick-down"), 600);
+  }
+
+  function setSpreadClass(spread, max) {
+    const el = $("ticker-spread");
+    el.classList.remove("spread-ok", "spread-warn", "spread-block");
+    if (spread == null || max == null) return;
+    if (spread > max) el.classList.add("spread-block");
+    else if (spread > max * 0.5) el.classList.add("spread-warn");
+    else el.classList.add("spread-ok");
+  }
+
+  function ageString(isoTime) {
+    if (!isoTime) return "—";
+    const t = new Date(isoTime);
+    const ms = Date.now() - t.getTime();
+    if (ms < 0) return "just now";
+    if (ms < 1500) return "just now";
+    if (ms < 60_000) return `${Math.round(ms / 1000)}s ago`;
+    if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
+    return `${Math.round(ms / 3_600_000)}h ago`;
+  }
+
+  async function pollTicker() {
+    try {
+      const r = await fetch("/api/ticker");
+      if (!r.ok) {
+        tickerErrors++;
+        if (tickerErrors > 3) setTickerState("error", "no data");
+        return;
+      }
+      const t = await r.json();
+      tickerErrors = 0;
+
+      if (t.stale) {
+        setTickerState("stale", t.error ? "stale" : "waiting");
+        $("ticker-bid").textContent = "—";
+        $("ticker-ask").textContent = "—";
+        $("ticker-spread").textContent = "—";
+        $("ticker-mid").textContent = "—";
+        $("ticker-time").textContent = "—";
+        $("ticker-age").textContent = "—";
+        $("ticker-spread-limit").textContent = "";
+        return;
+      }
+
+      setTickerState("live", "live");
+
+      const bidEl = $("ticker-bid");
+      const askEl = $("ticker-ask");
+      bidEl.textContent = fmt(t.bid);
+      askEl.textContent = fmt(t.ask);
+      $("ticker-spread").textContent = "$" + fmt(t.spread);
+      $("ticker-mid").textContent = fmt(t.mid);
+      $("ticker-spread-limit").textContent =
+        t.max_spread != null ? `limit $${fmt(t.max_spread)}` : "";
+
+      if (lastBid != null && t.bid !== lastBid)
+        flash(bidEl, t.bid > lastBid ? "up" : "down");
+      if (lastAsk != null && t.ask !== lastAsk)
+        flash(askEl, t.ask > lastAsk ? "up" : "down");
+      lastBid = t.bid; lastAsk = t.ask;
+
+      setSpreadClass(t.spread, t.max_spread);
+
+      $("ticker-time").textContent =
+        t.time ? t.time.substring(11, 19) + " UTC" : "—";
+      $("ticker-age").textContent = ageString(t.time);
+    } catch (e) {
+      tickerErrors++;
+      if (tickerErrors > 3) setTickerState("error", "offline");
+    }
+  }
+
+  function setTickerState(cls, label) {
+    const el = $("ticker-state");
+    el.className = "ticker-state " + cls;
+    el.textContent = label;
+  }
+
+  setInterval(pollTicker, 300);
+  pollTicker();
+
 
   function renderHeader(snap) {
     $("last-update").textContent =

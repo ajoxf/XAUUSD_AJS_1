@@ -109,6 +109,52 @@ def test_settings_dataclass_has_no_auth_fields():
     assert not hasattr(s, "secret_key")
 
 
+def test_ticker_stale_when_no_broker(client):
+    """Bot stopped → no broker connected → stale=True."""
+    r = client.get("/api/ticker")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["stale"] is True
+    assert data["symbol"] == "XAUUSD"
+    assert "max_spread" in data
+    assert data["bid"] is None and data["ask"] is None
+
+
+def test_ticker_live_quotes(app):
+    """Inject a paper broker into the supervisor and verify the ticker reads it."""
+    from datetime import datetime, timezone
+    from src.broker.paper_adapter import PaperAdapter
+    broker = PaperAdapter(starting_equity=100_000.0, spread=0.30)
+    broker.set_quote(mid=2456.78,
+                      time_utc=datetime(2024, 6, 25, 14, 30, tzinfo=timezone.utc))
+    sup = app.config["SUPERVISOR"]
+    sup.broker = broker
+
+    client = app.test_client()
+    r = client.get("/api/ticker")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["stale"] is False
+    assert data["bid"] == 2456.78 - 0.15    # mid - half_spread
+    assert data["ask"] == 2456.78 + 0.15
+    assert data["spread"] == pytest.approx(0.30, abs=1e-6)
+    assert data["mid"] == pytest.approx(2456.78, abs=1e-6)
+    assert "2024-06-25" in data["time"]
+
+
+def test_ticker_includes_max_spread_for_colour_coding(app):
+    """Dashboard JS uses max_spread to colour-code green/yellow/red."""
+    from src.broker.paper_adapter import PaperAdapter
+    sup = app.config["SUPERVISOR"]
+    sup.broker = PaperAdapter(starting_equity=100_000.0, spread=0.05)
+    sup.broker.set_quote(mid=2000.0)
+
+    client = app.test_client()
+    data = client.get("/api/ticker").get_json()
+    assert data["max_spread"] == 0.50    # default from Settings
+    assert data["spread"] < data["max_spread"]   # green territory
+
+
 def test_non_localhost_bind_just_warns(tmp_path, caplog):
     """Non-localhost bind no longer raises — just warns. User's choice."""
     import logging
