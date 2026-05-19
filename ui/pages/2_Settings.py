@@ -1,8 +1,11 @@
 """Settings: broker credentials, risk, mode, feature flags."""
 from __future__ import annotations
 
+import sys
 from dataclasses import asdict, replace
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import streamlit as st
 

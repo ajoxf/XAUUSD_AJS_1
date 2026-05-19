@@ -5,6 +5,13 @@ Launch with:
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Ensure repo root is on sys.path so `from ui.X import Y` works when
+# Streamlit launches this script directly.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import streamlit as st
 
 from ui.components import get_settings, sidebar_controls
