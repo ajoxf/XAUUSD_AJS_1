@@ -142,6 +142,60 @@ def test_ticker_live_quotes(app):
     assert "2024-06-25" in data["time"]
 
 
+def test_dashboard_renders_active_levels_section(client):
+    """The ATR + entry/SL/TP strip is wired into the page."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert b"Active levels" in r.data
+    assert b'id="levels-grid"' in r.data
+    assert b'id="levels-source"' in r.data
+
+
+def test_snapshot_carries_atr_and_levels(app):
+    """premarket payload exposes everything the levels strip needs."""
+    from datetime import date, datetime, timezone, timedelta
+    from src.engine.runner import Engine
+    from src.engine.logger import StructuredLogger
+    from src.broker.paper_adapter import PaperAdapter
+    from src.data.feed import DataFeed
+    from tests.conftest import synthetic_daily, synthetic_h4
+
+    class _Feed(DataFeed):
+        def __init__(self, d, h):
+            self._d = d; self._h = h
+        def daily(self, sym, end, lookback_days): return self._d.tail(lookback_days)
+        def h4(self, sym, end_utc, lookback_bars): return self._h.tail(lookback_bars)
+        def m15(self, sym, s, e): return None
+
+    settings = app.config["SETTINGS"]
+    broker = PaperAdapter(starting_equity=100_000.0, spread=0.20)
+    broker.set_quote(mid=2000.0)
+    daily = synthetic_daily(date(2024, 6, 25), n=220, daily_range=30.0)
+    h4 = synthetic_h4(datetime(2024, 6, 25, 13, 30, tzinfo=timezone.utc), n=220)
+    logger = StructuredLogger(settings.log_dir, level="WARNING")
+    engine = Engine(settings, broker, _Feed(daily, h4), logger)
+    engine.start_day(date(2024, 6, 25))
+
+    sup = app.config["SUPERVISOR"]
+    sup.broker = broker
+    sup.engine = engine
+
+    snap = sup.snapshot(recent_events_limit=0)
+    pm = snap.premarket
+    assert pm is not None
+    # ATR readings
+    assert pm["atr_20"] > 0
+    assert pm["atr_50"] > 0
+    assert "regime" in pm and "regime_ratio" in pm
+    # Trade levels — both directions
+    for k in ("long_entry", "long_sl", "long_tp1", "long_tp2", "long_tp2_fib",
+              "short_entry", "short_sl", "short_tp1", "short_tp2", "short_tp2_fib"):
+        assert k in pm and pm[k] is not None
+    assert pm["long_sl"] == pm["prev_close"]
+    assert pm["long_tp1"] > pm["long_entry"]
+    assert pm["short_tp1"] < pm["short_entry"]
+
+
 def test_ticker_includes_max_spread_for_colour_coding(app):
     """Dashboard JS uses max_spread to colour-code green/yellow/red."""
     from src.broker.paper_adapter import PaperAdapter

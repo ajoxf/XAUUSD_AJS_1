@@ -285,8 +285,78 @@
     }).join("");
   }
 
+  function levelCard(label, value, sub = "", cls = "") {
+    return `<div class="col-md-2 col-sm-4 col-6"><div class="metric-card">
+      <div class="metric-label">${label}</div>
+      <div class="metric-value ${cls}">${value}</div>
+      ${sub ? `<div class="metric-delta">${sub}</div>` : ""}
+    </div></div>`;
+  }
+
+  function delta(level, ref) {
+    if (level == null || ref == null) return "";
+    const d = level - ref;
+    const sign = d >= 0 ? "+" : "";
+    return `${sign}${d.toFixed(2)} from ${App.fmtUsd(ref)}`;
+  }
+
+  function renderLevels(snap) {
+    const grid = $("levels-grid");
+    const src = $("levels-source");
+    const pm = snap.premarket;
+    if (!pm) {
+      grid.innerHTML = '<div class="col text-muted small">Levels will appear once today\'s plan is built.</div>';
+      src.textContent = "—";
+      return;
+    }
+
+    let direction, entry, sl, tp1, tp2, tp2_fib, source;
+    if (snap.position && !snap.position.closed) {
+      const p = snap.position;
+      direction = p.direction;
+      entry = p.entry_price;
+      sl = p.current_stop;
+      tp1 = p.tp1;
+      tp2 = p.tp2;
+      tp2_fib = direction === "LONG" ? pm.long_tp2_fib : pm.short_tp2_fib;
+      source = `Live position (${direction})`;
+    } else if (pm.trend_bias === "LONG_ONLY") {
+      direction = "LONG"; entry = pm.long_entry; sl = pm.long_sl;
+      tp1 = pm.long_tp1; tp2 = pm.long_tp2; tp2_fib = pm.long_tp2_fib;
+      source = "Today's plan — long bias";
+    } else if (pm.trend_bias === "SHORT_ONLY") {
+      direction = "SHORT"; entry = pm.short_entry; sl = pm.short_sl;
+      tp1 = pm.short_tp1; tp2 = pm.short_tp2; tp2_fib = pm.short_tp2_fib;
+      source = "Today's plan — short bias";
+    } else {
+      // BOTH zone — favour long if no other signal; show the long side
+      direction = "LONG (ambiguous)"; entry = pm.long_entry; sl = pm.long_sl;
+      tp1 = pm.long_tp1; tp2 = pm.long_tp2; tp2_fib = pm.long_tp2_fib;
+      source = "Today's plan — half size (BOTH zone)";
+    }
+
+    src.textContent = source;
+    const isLong = direction.startsWith("LONG");
+    const slSub = delta(sl, entry);
+    const tp1Sub = delta(tp1, entry);
+    const tp2Sub = `${(tp2_fib || 1.0).toFixed(3)}× range · ${delta(tp2, entry)}`;
+
+    grid.innerHTML = [
+      levelCard("ATR(20)", App.fmtUsd(pm.atr_20),
+                 `regime ${pm.regime}`),
+      levelCard("ATR(50)", App.fmtUsd(pm.atr_50),
+                 `ratio ${pm.regime_ratio}`),
+      levelCard(`Entry (${direction})`, App.fmtUsd(entry),
+                 isLong ? "buy on cross above" : "sell on cross below"),
+      levelCard("Stop loss", App.fmtUsd(sl), slSub, "text-danger"),
+      levelCard("TP1", App.fmtUsd(tp1), tp1Sub, "text-success"),
+      levelCard("TP2", App.fmtUsd(tp2), tp2Sub, "text-success"),
+    ].join("");
+  }
+
   App.onSnapshot(snap => {
     renderHeader(snap);
+    renderLevels(snap);
     renderPlan(snap);
     renderPosition(snap);
     renderWeek(snap);
