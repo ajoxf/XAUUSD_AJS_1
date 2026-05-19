@@ -31,6 +31,18 @@ class Settings:
     log_level: str
     log_dir: Path
 
+    # Web UI
+    webapp_host: str = "127.0.0.1"
+    webapp_port: int = 8080
+    admin_username: str = "admin"
+    admin_password: str = ""
+    secret_key: str = ""
+
+    # COMEX webhook
+    comex_webhook_host: str = "0.0.0.0"
+    comex_webhook_port: int = 5050
+    comex_webhook_enabled: bool = True
+
     # Spec constants
     max_spread_per_oz: float = 0.50
     max_slippage_per_oz: float = 0.30
@@ -45,10 +57,10 @@ class Settings:
     tranche_2_pct: float = 0.30
     breakeven_plus_pct: float = 0.30
     tp1_accel_pct: float = 0.80
-    circuit_breaker_pct: float = 0.30   # halt if equity falls 30% from start
+    circuit_breaker_pct: float = 0.30
     consecutive_loss_pause: int = 7
     lot_step: float = 0.01
-    contract_size: float = 100.0         # 1 standard lot = 100 oz
+    contract_size: float = 100.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -64,4 +76,13 @@ class Settings:
             mode=os.getenv("MODE", "paper").lower(),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             log_dir=Path(os.getenv("LOG_DIR", "logs")),
+            webapp_host=os.getenv("WEBAPP_HOST", "127.0.0.1"),
+            webapp_port=int(os.getenv("WEBAPP_PORT", "8080")),
+            admin_username=os.getenv("ADMIN_USERNAME", "admin"),
+            admin_password=os.getenv("ADMIN_PASSWORD", ""),
+            secret_key=os.getenv("SECRET_KEY", ""),
+            comex_webhook_host=os.getenv("COMEX_WEBHOOK_HOST", "0.0.0.0"),
+            comex_webhook_port=int(os.getenv("COMEX_WEBHOOK_PORT", "5050")),
+            comex_webhook_enabled=os.getenv("COMEX_WEBHOOK_ENABLED",
+                                              "true").lower() in ("1", "true", "yes"),
         )

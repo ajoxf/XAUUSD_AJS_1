@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Logs{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>📜 Logs</h1>
+  <div class="muted">Every decision the bot makes is recorded here.</div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Event type</label>
+        <select id="log-kind" class="form-select">
+          <option value="">All</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Show last</label>
+        <select id="log-limit" class="form-select">
+          <option value="100">100</option>
+          <option value="200" selected>200</option>
+          <option value="500">500</option>
+          <option value="2000">2000</option>
+        </select>
+      </div>
+      <div class="col-md-3 d-flex align-items-end">
+        <button id="log-refresh" class="btn btn-primary">⟳ Refresh</button>
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <a id="log-download" href="/api/logs" class="btn btn-outline-secondary">📥 Download</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <div class="table-wrap">
+      <table class="table table-sm table-hover">
+        <thead><tr><th>Time (UTC)</th><th>Event</th><th>Detail</th></tr></thead>
+        <tbody id="logs-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/logs.js') }}"></script>
+{% endblock %}

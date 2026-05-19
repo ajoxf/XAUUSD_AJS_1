@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Backtest{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>🧪 Backtest</h1>
+  <div class="muted">Daily-resolution approximation — see the note below.</div>
+</div>
+
+<div class="alert alert-info small">
+  <strong>About this backtest:</strong> intraday RSI and re-test checks are skipped
+  (they need 15-min data). Outcomes are estimated from each day's O/H/L/C path.
+  Live results typically fire <em>fewer</em> trades but with <em>higher</em> win rate.
+</div>
+
+<form id="bt-form" class="card mb-3">
+  <div class="card-header"><h2>Configure</h2></div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-3">
+        <label class="form-label">Start date</label>
+        <input type="date" class="form-control" name="start" id="bt-start" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">End date</label>
+        <input type="date" class="form-control" name="end" id="bt-end" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Quick range</label>
+        <select id="bt-quick" class="form-select">
+          <option value="30">Last 30 days</option>
+          <option value="60" selected>Last 60 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="180">Last 180 days</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Starting equity (USD)</label>
+        <input type="number" class="form-control" name="starting_equity"
+               step="1000" min="1000" value="100000">
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary mt-3" id="bt-run">▶ Run backtest</button>
+    <span id="bt-spinner" class="ms-2 d-none">
+      <span class="spinner-border spinner-border-sm"></span> Running…
+    </span>
+  </div>
+</form>
+
+<div id="bt-error" class="alert alert-danger d-none"></div>
+
+<div id="bt-results" class="d-none">
+  <div class="row g-3 mb-3">
+    <div class="col"><div class="metric-card">
+      <div class="metric-label">Trades</div><div class="metric-value" id="bt-n">—</div>
+    </div></div>
+    <div class="col"><div class="metric-card">
+      <div class="metric-label">TP1 win rate</div><div class="metric-value" id="bt-wr">—</div>
+    </div></div>
+    <div class="col"><div class="metric-card">
+      <div class="metric-label">Final equity</div><div class="metric-value" id="bt-final">—</div>
+    </div></div>
+    <div class="col"><div class="metric-card">
+      <div class="metric-label">Total return</div><div class="metric-value" id="bt-return">—</div>
+    </div></div>
+    <div class="col"><div class="metric-card">
+      <div class="metric-label">Max drawdown</div><div class="metric-value text-danger" id="bt-dd">—</div>
+    </div></div>
+  </div>
+
+  <section class="card mb-3">
+    <div class="card-header"><h2>Equity curve</h2></div>
+    <div class="card-body"><div id="bt-equity-chart" style="height:380px"></div></div>
+  </section>
+
+  <section class="card mb-3">
+    <div class="card-header"><h2>Drawdown</h2></div>
+    <div class="card-body"><div id="bt-dd-chart" style="height:240px"></div></div>
+  </section>
+
+  <section class="card mb-3">
+    <div class="card-header d-flex justify-content-between">
+      <h2>Trades</h2>
+      <button id="bt-download" class="btn btn-sm btn-outline-secondary">📥 Download CSV</button>
+    </div>
+    <div class="card-body">
+      <div class="table-wrap">
+        <table class="table table-sm table-striped">
+          <thead><tr>
+            <th>Date</th><th>Dir</th><th>Regime</th>
+            <th>Entry</th><th>SL</th><th>TP1</th><th>TP2</th>
+            <th>Lots</th><th>Outcome</th><th>Exit</th>
+            <th>P&amp;L</th><th>Equity</th>
+          </tr></thead>
+          <tbody id="bt-trades-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<script src="{{ url_for('static', filename='js/backtest.js') }}"></script>
+{% endblock %}

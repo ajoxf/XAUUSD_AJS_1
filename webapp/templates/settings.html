@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>⚙️ Settings</h1>
+  <div class="muted">Changes are saved to <code>.env</code> and applied immediately.</div>
+</div>
+
+<div id="save-toast" class="alert alert-success d-none">Saved.</div>
+
+<form id="settings-form" class="card mb-3">
+  <div class="card-header"><h2>Operational</h2></div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Trading mode</label>
+        <select name="mode" class="form-select">
+          {% for m in ['paper', 'live', 'dryrun'] %}
+          <option value="{{ m }}" {% if settings.mode == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text">
+          paper = market replay · live = MT5 · dryrun = compute but don't trade
+        </div>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Symbol</label>
+        <input class="form-control" name="symbol" value="{{ settings.symbol }}">
+        <div class="form-text">MT5 symbol (XAUUSD, XAUUSDm, GOLD…)</div>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Log level</label>
+        <select name="log_level" class="form-select">
+          {% for lvl in ['DEBUG', 'INFO', 'WARNING', 'ERROR'] %}
+          <option value="{{ lvl }}" {% if settings.log_level == lvl %}selected{% endif %}>{{ lvl }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+</form>
+
+<form id="risk-form" class="card mb-3">
+  <div class="card-header"><h2>Risk</h2></div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Starting equity (USD)</label>
+        <input class="form-control" type="number" step="100" min="1000"
+               name="starting_equity" value="{{ settings.starting_equity }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Risk per trade</label>
+        <div class="input-group">
+          <input class="form-control" type="number" step="0.25" min="0.5" max="5"
+                 name="risk_pct_percent"
+                 value="{{ (settings.risk_pct * 100) | round(2) }}">
+          <span class="input-group-text">%</span>
+        </div>
+        <div class="form-text">
+          Default 3% per spec. Auto-reduced to 2% / 1.5% by safety monitors.
+        </div>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Magic number</label>
+        <input class="form-control" type="number" name="magic_number" value="{{ settings.magic_number }}">
+        <div class="form-text">MT5 identifier for this bot's orders.</div>
+      </div>
+    </div>
+  </div>
+</form>
+
+<form id="mt5-form" class="card mb-3">
+  <div class="card-header"><h2>MetaTrader 5 (live mode only)</h2></div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">Login</label>
+        <input class="form-control" name="mt5_login" value="{{ settings.mt5_login }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Server</label>
+        <input class="form-control" name="mt5_server" value="{{ settings.mt5_server }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Password</label>
+        <input class="form-control" type="password" name="mt5_password"
+               placeholder="Leave blank to keep current">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">Terminal path (optional)</label>
+        <input class="form-control" name="mt5_terminal_path"
+               value="{{ settings.mt5_terminal_path }}">
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="text-end mb-4">
+  <button type="button" id="save-settings" class="btn btn-primary">💾 Save all changes</button>
+</div>
+
+<section class="card mb-3">
+  <div class="card-header"><h2>Strategy filters & optimisations</h2></div>
+  <div class="card-body">
+    <p class="text-muted">All toggles default ON (v3.2 production config). Switch OFF only for A/B testing. Changes apply immediately.</p>
+    <ul class="nav nav-tabs" id="flag-tabs" role="tablist">
+      {% for group, _ in flag_meta.items() %}
+      <li class="nav-item">
+        <button class="nav-link {% if loop.first %}active{% endif %}"
+                data-bs-toggle="tab" data-bs-target="#flag-tab-{{ loop.index }}"
+                type="button">{{ group }}</button>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="tab-content pt-3" id="flag-tab-content">
+      {% for group, items in flag_meta.items() %}
+      <div class="tab-pane fade {% if loop.first %}show active{% endif %}"
+           id="flag-tab-{{ loop.index }}" role="tabpanel">
+        {% for key, label in items %}
+        <div class="form-check">
+          <input type="checkbox" class="form-check-input flag-toggle"
+                 id="flag-{{ key }}" data-flag="{{ key }}"
+                 {% if flags[key] %}checked{% endif %}>
+          <label class="form-check-label" for="flag-{{ key }}">{{ label }}</label>
+        </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+{% endblock %}

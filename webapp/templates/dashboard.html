@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>📊 Dashboard</h1>
+  <div class="muted" id="last-update">Connecting…</div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col"><div class="metric-card">
+      <div class="metric-label">Equity</div>
+      <div class="metric-value" id="m-equity">—</div>
+      <div class="metric-delta" id="m-equity-delta"></div>
+  </div></div>
+  <div class="col"><div class="metric-card">
+      <div class="metric-label">Peak</div>
+      <div class="metric-value" id="m-peak">—</div>
+  </div></div>
+  <div class="col"><div class="metric-card">
+      <div class="metric-label">Drawdown</div>
+      <div class="metric-value text-danger" id="m-drawdown">—</div>
+  </div></div>
+  <div class="col"><div class="metric-card">
+      <div class="metric-label">Active risk</div>
+      <div class="metric-value" id="m-risk">—</div>
+  </div></div>
+  <div class="col"><div class="metric-card">
+      <div class="metric-label">Status</div>
+      <div class="metric-value" id="m-status">—</div>
+  </div></div>
+</div>
+
+<div id="event-block-banner" class="alert alert-warning d-none"></div>
+
+<section class="card mb-3">
+  <div class="card-header"><h2 id="plan-date">Today's plan</h2></div>
+  <div class="card-body" id="plan-body">
+    <div class="muted">Pre-market context will appear once the bot starts.</div>
+  </div>
+</section>
+
+<section class="card mb-3">
+  <div class="card-header"><h2>Open position</h2></div>
+  <div class="card-body" id="position-body">
+    <div class="muted">No open position.</div>
+  </div>
+</section>
+
+<section class="card mb-3">
+  <div class="card-header"><h2>Week so far</h2></div>
+  <div class="card-body">
+    <div class="row g-2" id="week-grid"></div>
+    <h3 class="h6 mt-3">Gates that blocked trades this week</h3>
+    <div class="row g-2" id="gates-grid"></div>
+    <h3 class="h6 mt-3">v3.2 enhancement activity</h3>
+    <div class="row g-2" id="v32-grid"></div>
+  </div>
+</section>
+
+<section class="card mb-3">
+  <div class="card-header"><h2>Safety monitors</h2></div>
+  <div class="card-body">
+    <div class="row g-2" id="monitor-grid"></div>
+  </div>
+</section>
+
+<section class="card mb-3">
+  <div class="card-header"><h2>Recent activity</h2></div>
+  <div class="card-body">
+    <div class="table-wrap">
+      <table class="table table-sm table-striped">
+        <thead><tr><th>Time (UTC)</th><th>Event</th><th>Detail</th></tr></thead>
+        <tbody id="events-body"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}

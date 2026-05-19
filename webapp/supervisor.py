@@ -1,18 +1,15 @@
-"""Engine lifecycle supervisor for the Streamlit UI.
+"""Engine lifecycle supervisor.
 
 Owns a single Engine + broker + background thread. Provides thread-safe
-snapshots of state so the Streamlit UI can render without races.
-
-Paper mode replays the most recent 30 trading days through the same Engine
-code path that runs live — non-technical users get a live-looking demo with
-no broker required.
+snapshots of state. Paper mode replays the last 30 trading days through
+the live engine code path for demos. Live mode polls MT5 quotes every 3s.
 """
 from __future__ import annotations
 
+import logging
 import threading
-import time
 import traceback
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -21,16 +18,17 @@ import pandas as pd
 from config.settings import Settings
 from src.broker.adapter import BrokerAdapter
 from src.broker.paper_adapter import PaperAdapter
-from src.data.feed import DataFeed
 from src.data.yfinance_feed import YFinanceFeed
 from src.engine.logger import StructuredLogger
 from src.engine.runner import Engine
+from src.strategy.comex_volume import ComexVolumeTracker
 from src.strategy.entry import Candle, Direction
+
+log = logging.getLogger("xauusd-bot.supervisor")
 
 
 @dataclass
 class SupervisorSnapshot:
-    """Immutable view of engine state safe to read from any thread."""
     status: str
     mode: str
     last_heartbeat: Optional[datetime]
@@ -39,7 +37,6 @@ class SupervisorSnapshot:
     starting_equity: float
     peak_equity: float
     drawdown_pct: float
-
     today: Optional[date]
     premarket: Optional[Dict[str, Any]]
     position: Optional[Dict[str, Any]]
@@ -47,12 +44,32 @@ class SupervisorSnapshot:
     monitor: Dict[str, Any]
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "mode": self.mode,
+            "last_heartbeat": self.last_heartbeat.isoformat() if self.last_heartbeat else None,
+            "last_error": self.last_error,
+            "equity": self.equity,
+            "starting_equity": self.starting_equity,
+            "peak_equity": self.peak_equity,
+            "drawdown_pct": self.drawdown_pct,
+            "today": self.today.isoformat() if self.today else None,
+            "premarket": self.premarket,
+            "position": self.position,
+            "week": self.week,
+            "monitor": self.monitor,
+            "recent_events": self.recent_events,
+        }
+
 
 class EngineSupervisor:
-    """Lifecycle owner for the bot. Single instance per Streamlit session."""
+    """Process-wide singleton (per-app). Thread-safe."""
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings,
+                 comex_tracker: Optional[ComexVolumeTracker] = None):
         self.settings = settings
+        self.comex_tracker = comex_tracker
         self.engine: Optional[Engine] = None
         self.broker: Optional[BrokerAdapter] = None
         self.logger: Optional[StructuredLogger] = None
@@ -62,15 +79,12 @@ class EngineSupervisor:
         self.status: str = "stopped"
         self.last_error: Optional[str] = None
         self.last_heartbeat: Optional[datetime] = None
-        # Paper replay state
-        self._replay_idx: int = 0
-        self._replay_data: Optional[pd.DataFrame] = None
 
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    # ── Control ───────────────────────────────────────────
+    # ── Lifecycle ────────────────────────────────────────
     def start(self) -> None:
         if self.is_running:
             return
@@ -95,13 +109,19 @@ class EngineSupervisor:
             pass
         self.status = "stopped"
 
-    # ── Thread body ───────────────────────────────────────
+    def update_settings(self, settings: Settings) -> None:
+        """Apply new settings — caller should ensure the engine is stopped."""
+        with self._lock:
+            self.settings = settings
+
+    # ── Thread body ──────────────────────────────────────
     def _safe_run(self) -> None:
         try:
             self._run()
         except Exception as exc:
             self.last_error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
             self.status = "error"
+            log.exception("Engine thread crashed")
 
     def _run(self) -> None:
         self.logger = StructuredLogger(self.settings.log_dir, level=self.settings.log_level)
@@ -112,9 +132,10 @@ class EngineSupervisor:
             self.broker = PaperAdapter(starting_equity=self.settings.starting_equity)
         self.broker.connect()
 
-        feed = YFinanceFeed()
         with self._lock:
-            self.engine = Engine(self.settings, self.broker, feed, self.logger)
+            self.engine = Engine(self.settings, self.broker,
+                                  YFinanceFeed(), self.logger,
+                                  comex_tracker=self.comex_tracker)
 
         if self.settings.mode == "live":
             self._run_live_loop()
@@ -142,46 +163,36 @@ class EngineSupervisor:
                 break
 
     def _run_paper_replay(self) -> None:
-        """Replay last ~30 trading days through the engine, one tick per second
-        across the synthesised intraday path. Educational demo of the live loop."""
         self.status = "running"
         try:
             feed = YFinanceFeed()
             end = datetime.now(tz=timezone.utc).date()
-            replay_days = feed.daily(self.settings.symbol, end, lookback_days=30)
+            replay = feed.daily(self.settings.symbol, end, lookback_days=30)
         except Exception as exc:
             self.last_error = f"yfinance unavailable for replay: {exc}"
             self.status = "error"
             return
 
-        self._replay_data = replay_days
-        for trade_date, day_row in replay_days.iterrows():
+        for trade_date, day_row in replay.iterrows():
             if self._stop.is_set():
                 break
-            self._replay_idx += 1
-            trade_date_ = trade_date.date() if hasattr(trade_date, "date") else trade_date
+            td = trade_date.date() if hasattr(trade_date, "date") else trade_date
             with self._lock:
-                ctx = self.engine.start_day(trade_date_)
+                ctx = self.engine.start_day(td)
             if ctx is None:
                 if self._stop.wait(0.5):
                     break
                 continue
 
-            # Synthesise an intraday path: open → high → low → close (or O→L→H→C
-            # if close < open). 60 steps across the session.
             path = self._intraday_path(day_row)
-            session_start = ctx.session_start_utc
-            session_end = ctx.session_end_utc
-            n_steps = len(path)
-            step_dt = (session_end - session_start) / n_steps
+            n = len(path)
+            step_dt = (ctx.session_end_utc - ctx.session_start_utc) / n
 
-            # First, evaluate signal at the candle just after open
-            self._maybe_fire_signal(ctx, day_row, path)
-
+            self._maybe_fire_signal(ctx, path)
             for i, price in enumerate(path):
                 if self._stop.is_set():
                     break
-                tick_time = session_start + step_dt * i
+                tick_time = ctx.session_start_utc + step_dt * i
                 self.broker.set_quote(mid=price, time_utc=tick_time)
                 with self._lock:
                     self.engine.on_tick(price, tick_time)
@@ -189,70 +200,53 @@ class EngineSupervisor:
                 if self._stop.wait(0.25):
                     break
 
-            # Force-close at session end
             with self._lock:
                 if self.engine.state.position and not self.engine.state.position.closed:
                     from src.strategy.exits import force_close_session_end
                     closed = force_close_session_end(self.engine.state.position,
-                                                       float(day_row["close"]), session_end)
+                                                      float(day_row["close"]),
+                                                      ctx.session_end_utc)
                     for t in closed:
                         self.engine._record_close(t)
                     self.engine._post_trade_bookkeeping(self.engine.state.position)
 
         self.status = "completed"
 
-    def _intraday_path(self, day_row: pd.Series, n: int = 40) -> List[float]:
-        """Generate a price path open→high→low→close (or O→L→H→C)."""
+    @staticmethod
+    def _intraday_path(day_row: pd.Series, n: int = 40) -> List[float]:
         o, h, l, c = (float(day_row["open"]), float(day_row["high"]),
                        float(day_row["low"]), float(day_row["close"]))
-        bullish = c >= o
-        # Path waypoints
-        if bullish:
-            waypoints = [o, h, l, c]
-        else:
-            waypoints = [o, l, h, c]
-        # Linearly interpolate between waypoints
-        steps_per_seg = n // 3
+        waypoints = [o, h, l, c] if c >= o else [o, l, h, c]
+        steps = n // 3
         path: List[float] = []
         for i in range(3):
-            start, end = waypoints[i], waypoints[i + 1]
-            for j in range(steps_per_seg):
-                path.append(start + (end - start) * j / steps_per_seg)
+            a, b = waypoints[i], waypoints[i + 1]
+            for j in range(steps):
+                path.append(a + (b - a) * j / steps)
         path.append(c)
         return path
 
-    def _maybe_fire_signal(self, ctx, day_row: pd.Series, path: List[float]) -> None:
-        """Synthesise a confirmation candle from the first part of the path
-        and feed it through the standard evaluate_signal pathway."""
+    def _maybe_fire_signal(self, ctx, path: List[float]) -> None:
         if ctx.trend_bias not in ("LONG_ONLY", "BOTH"):
             direction = Direction.SHORT
             level = ctx.short_entry
         else:
             direction = Direction.LONG
             level = ctx.long_entry
-
-        # Did the path actually cross the level?
         crossed = (max(path) >= level) if direction == Direction.LONG else (min(path) <= level)
         if not crossed:
             return
-
-        # Build a confirmation candle straddling the level
         if direction == Direction.LONG:
-            conf = Candle(open=level - 0.5, high=max(path[:10]) if len(path) >= 10 else level + 2,
-                          low=level - 1.0, close=level + 1.5)
-            nxt = Candle(open=conf.close, high=conf.close + 1.5,
-                         low=conf.close - 0.5, close=conf.close + 1.0)
+            conf = Candle(level - 0.5, max(path[:10]) if len(path) >= 10 else level + 2,
+                          level - 1.0, level + 1.5)
+            nxt = Candle(conf.close, conf.close + 1.5, conf.close - 0.5, conf.close + 1.0)
         else:
-            conf = Candle(open=level + 0.5, high=level + 1.0,
-                          low=min(path[:10]) if len(path) >= 10 else level - 2, close=level - 1.5)
-            nxt = Candle(open=conf.close, high=conf.close + 0.5,
-                         low=conf.close - 1.5, close=conf.close - 1.0)
-
-        # RSI feed: use a synthetic neutral-zone series
+            conf = Candle(level + 0.5, level + 1.0,
+                          min(path[:10]) if len(path) >= 10 else level - 2, level - 1.5)
+            nxt = Candle(conf.close, conf.close + 0.5, conf.close - 1.5, conf.close - 1.0)
         closes_15m = self._neutral_rsi_closes(direction)
-
-        # Move broker quote to entry level so open_market fills here
-        self.broker.set_quote(mid=level, time_utc=ctx.session_start_utc + timedelta(minutes=15))
+        self.broker.set_quote(mid=level,
+                               time_utc=ctx.session_start_utc + timedelta(minutes=15))
         with self._lock:
             self.engine.evaluate_signal(
                 now_utc=ctx.session_start_utc + timedelta(minutes=15),
@@ -264,7 +258,6 @@ class EngineSupervisor:
 
     @staticmethod
     def _neutral_rsi_closes(direction: Direction) -> List[float]:
-        """Closes that produce RSI ≈ 55–60 (long zone) or 40–45 (short zone)."""
         closes = [100.0]
         if direction == Direction.LONG:
             for i in range(20):
@@ -274,21 +267,19 @@ class EngineSupervisor:
                 closes.append(closes[-1] + (-0.4 if i % 2 == 0 else 0.35))
         return closes
 
-    # ── Snapshot ──────────────────────────────────────────
+    # ── Snapshot ─────────────────────────────────────────
     def snapshot(self, recent_events_limit: int = 50) -> SupervisorSnapshot:
         with self._lock:
             engine = self.engine
             equity = self.broker.equity() if self.broker else self.settings.starting_equity
-            premarket = None
-            position = None
-            week = {}
+            premarket = position = None
+            week: Dict[str, Any] = {}
+            today = None
+            peak = start_eq = self.settings.starting_equity
             monitor = {"active_risk_pct": self.settings.risk_pct * 100,
                        "fast_active": False, "slow_active": False,
                        "consecutive_losses": 0, "win_rate_fast_20": None,
                        "win_rate_slow_50": None}
-            today = None
-            peak = self.settings.starting_equity
-            start_eq = self.settings.starting_equity
 
             if engine is not None:
                 state = engine.state
@@ -299,30 +290,7 @@ class EngineSupervisor:
                     premarket = _premarket_view(state.premarket)
                 if state.position is not None and not state.position.closed:
                     position = _position_view(state.position)
-                week = {
-                    "trades": state.week_trades,
-                    "wins_tp1": state.week_wins_tp1,
-                    "wins_tp2": state.week_wins_tp2,
-                    "sls": state.week_sls,
-                    "regime_exits": state.week_regime_exits,
-                    "tp1_accelerations": state.week_tp1_accels,
-                    "wednesday_accelerations": state.week_wednesday_accels,
-                    "comex_vol_exits": state.week_comex_vol_exits,
-                    "rsi_trims": state.week_rsi_trims,
-                    "back_to_back_tp2": state.week_back_to_back_tp2,
-                    "high_atr_tp2": state.week_high_atr_tp2,
-                    "session_close_half2": state.week_session_close_half2,
-                    "session_close_full": state.week_session_close_full,
-                    "b_fails": state.week_b_fails,
-                    "c_fails": state.week_c_fails,
-                    "d_fails": state.week_d_fails,
-                    "gate_block_event": state.gate_block_event,
-                    "gate_block_trend": state.gate_block_trend,
-                    "gate_block_sma200": state.gate_block_sma200,
-                    "gate_block_daily_lock": state.gate_block_daily_lock,
-                    "gate_block_atr_floor": state.gate_block_atr_floor,
-                    "gate_block_atr_cap": state.gate_block_atr_cap,
-                }
+                week = _week_view(state)
                 mon = state.win_rate_monitor
                 monitor = {
                     "active_risk_pct": round(mon.evaluate() * 100, 3),
@@ -336,48 +304,35 @@ class EngineSupervisor:
                 }
 
             drawdown_pct = max(0.0, (peak - equity) / peak * 100.0) if peak > 0 else 0.0
-            recent_events = self._read_recent_events(recent_events_limit)
-
             return SupervisorSnapshot(
-                status=self.status,
-                mode=self.settings.mode,
-                last_heartbeat=self.last_heartbeat,
-                last_error=self.last_error,
-                equity=equity,
-                starting_equity=start_eq,
-                peak_equity=peak,
-                drawdown_pct=drawdown_pct,
-                today=today,
-                premarket=premarket,
-                position=position,
-                week=week,
-                monitor=monitor,
-                recent_events=recent_events,
+                status=self.status, mode=self.settings.mode,
+                last_heartbeat=self.last_heartbeat, last_error=self.last_error,
+                equity=equity, starting_equity=start_eq, peak_equity=peak,
+                drawdown_pct=drawdown_pct, today=today, premarket=premarket,
+                position=position, week=week, monitor=monitor,
+                recent_events=self._read_recent_events(recent_events_limit),
             )
 
     def _read_recent_events(self, n: int) -> List[Dict[str, Any]]:
         import json
-        log_path = self.settings.log_dir / "events.jsonl"
-        if not log_path.exists():
+        path = self.settings.log_dir / "events.jsonl"
+        if not path.exists():
             return []
         try:
-            with log_path.open() as f:
+            with path.open() as f:
                 lines = f.readlines()
-            tail = lines[-n:]
-            return [json.loads(ln) for ln in tail if ln.strip()]
+            return [json.loads(ln) for ln in lines[-n:] if ln.strip()]
         except Exception:
             return []
 
 
 def _premarket_view(ctx) -> Dict[str, Any]:
     return {
-        "date": ctx.trade_date,
-        "range": round(ctx.range, 2),
-        "atr_20": round(ctx.atr_20, 2),
+        "date": ctx.trade_date.isoformat(),
+        "range": round(ctx.range, 2), "atr_20": round(ctx.atr_20, 2),
         "atr_50": round(ctx.atr_50, 2),
         "sma200_daily": round(ctx.sma200_daily, 2),
-        "regime": ctx.regime,
-        "regime_ratio": round(ctx.regime_ratio, 3),
+        "regime": ctx.regime, "regime_ratio": round(ctx.regime_ratio, 3),
         "trend_bias": ctx.trend_bias,
         "prev_close": round(ctx.prev_close, 2),
         "long_entry": round(ctx.long_entry, 2),
@@ -395,10 +350,9 @@ def _premarket_view(ctx) -> Dict[str, Any]:
         "short_filter_f": ctx.short_filter_f,
         "back_to_back_active": ctx.back_to_back_active,
         "high_atr_extension_active": ctx.high_atr_extension_active,
-        "session_start_utc": ctx.session_start_utc,
-        "session_end_utc": ctx.session_end_utc,
-        "event_blocked": ctx.event_blocked,
-        "event_reason": ctx.event_reason,
+        "session_start_utc": ctx.session_start_utc.isoformat(),
+        "session_end_utc": ctx.session_end_utc.isoformat(),
+        "event_blocked": ctx.event_blocked, "event_reason": ctx.event_reason,
         "seasonal_mult_long": ctx.seasonal_mult_long,
         "prev_session_close_type": ctx.prev_session_close_type,
     }
@@ -408,12 +362,10 @@ def _position_view(pos) -> Dict[str, Any]:
     return {
         "direction": pos.direction,
         "entry_price": round(pos.entry_price, 2),
-        "entry_time_utc": pos.entry_time_utc,
+        "entry_time_utc": pos.entry_time_utc.isoformat() if pos.entry_time_utc else None,
         "current_stop": round(pos.current_stop, 2),
-        "tp1": round(pos.tp1, 2),
-        "tp2": round(pos.tp2, 2),
-        "tp1_hit": pos.tp1_hit,
-        "tp2_hit": pos.tp2_hit,
+        "tp1": round(pos.tp1, 2), "tp2": round(pos.tp2, 2),
+        "tp1_hit": pos.tp1_hit, "tp2_hit": pos.tp2_hit,
         "accelerated_tp1": pos.accelerated_tp1,
         "accelerated_kind": pos.accelerated_kind,
         "rsi_trim_done": pos.rsi_trim_done,
@@ -424,4 +376,28 @@ def _position_view(pos) -> Dict[str, Any]:
              "partial_closes": t.partial_closes}
             for t in pos.tranches
         ],
+    }
+
+
+def _week_view(state) -> Dict[str, Any]:
+    return {
+        "trades": state.week_trades,
+        "wins_tp1": state.week_wins_tp1, "wins_tp2": state.week_wins_tp2,
+        "sls": state.week_sls, "regime_exits": state.week_regime_exits,
+        "tp1_accelerations": state.week_tp1_accels,
+        "wednesday_accelerations": state.week_wednesday_accels,
+        "comex_vol_exits": state.week_comex_vol_exits,
+        "rsi_trims": state.week_rsi_trims,
+        "back_to_back_tp2": state.week_back_to_back_tp2,
+        "high_atr_tp2": state.week_high_atr_tp2,
+        "session_close_half2": state.week_session_close_half2,
+        "session_close_full": state.week_session_close_full,
+        "b_fails": state.week_b_fails, "c_fails": state.week_c_fails,
+        "d_fails": state.week_d_fails,
+        "gate_block_event": state.gate_block_event,
+        "gate_block_trend": state.gate_block_trend,
+        "gate_block_sma200": state.gate_block_sma200,
+        "gate_block_daily_lock": state.gate_block_daily_lock,
+        "gate_block_atr_floor": state.gate_block_atr_floor,
+        "gate_block_atr_cap": state.gate_block_atr_cap,
     }

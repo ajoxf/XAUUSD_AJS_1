@@ -16,33 +16,37 @@ enhancements**:
 ## Architecture
 
 ```
-config/        feature flags + runtime settings
-ui/            Streamlit web app
-  app.py         landing page
-  supervisor.py  engine lifecycle (background thread)
-  backtest.py    historical backtest engine
-  components.py  shared widgets + session state
-  pages/         Dashboard, Settings, Backtest, Logs
-src/strategy/  pure rule engine (no I/O)
-  indicators   ATR, EMA, RSI, median
-  premarket     daily pre-market context (run once at 00:05 UTC)
-  gates         seven pre-trade gates (Opt 4 SMA200 short filter is G6)
-  entry         Layers A→D entry evaluation
-  sizing        3% risk + 50/50 split + seasonal/regime/alignment + audit
-  exits         50/50 exit, breakeven-plus, dynamic trail, COMEX vol fade,
-                  RSI post-TP1 trim, Wednesday acceleration, 20:55 UTC tree
-  comex_volume  COMEX GC1! 15-min volume tracker (Opt 1)
-  regime        ATR(20)/ATR(50) volatility regime
-  seasonal      monthly long-bias multiplier
-  events        FOMC/NFP/CPI calendar 2021–2026
-  session       DST-aware NY session window
-  safety        circuit breaker, win-rate monitors, daily lock, loss counter
-src/data/        DataFeed protocol + yfinance implementation
-src/broker/      BrokerAdapter protocol + MT5 + paper adapters
-src/integrations TradingView webhook receiver for COMEX volume (port 5050)
-src/engine/      runtime: state, structured logger, runner, weekly reports
-src/main.py      CLI entry point
-tests/         unit + integration tests
+config/             feature flags + runtime settings (env-loaded)
+webapp/             Flask production web app
+  __init__.py         app factory
+  server.py           Waitress launcher (entry point)
+  supervisor.py       engine lifecycle (background thread)
+  backtest.py         historical backtest engine
+  auth.py             HTTP Basic Auth decorator
+  api.py              JSON REST + SSE stream
+  views.py            HTML page routes
+  templates/          Jinja templates (Bootstrap 5)
+  static/             CSS + ES6 JS modules
+src/strategy/       pure rule engine (no I/O)
+  indicators          ATR, EMA, RSI, SMA, median
+  premarket           daily pre-market context (run once at 00:05 UTC)
+  gates               seven pre-trade gates (G6 SMA200 short filter is v3.2)
+  entry               Layers A→D entry evaluation
+  sizing              3% risk + 50/50 split + seasonal/regime/alignment + audit
+  exits               50/50 exit, breakeven-plus, dynamic trail, COMEX vol fade,
+                        RSI post-TP1 trim, Wednesday acceleration, 20:55 UTC tree
+  comex_volume        COMEX GC1! 15-min volume tracker (Opt 1)
+  regime              ATR(20)/ATR(50) volatility regime
+  seasonal            monthly long-bias multiplier
+  events              FOMC/NFP/CPI calendar 2021–2026
+  session             DST-aware NY session window
+  safety              circuit breaker, win-rate monitors, daily lock, loss counter
+src/data/           DataFeed protocol + yfinance implementation
+src/broker/         BrokerAdapter protocol + MT5 + paper adapters
+src/integrations/   TradingView webhook receiver (port 5050)
+src/engine/         runtime: state, structured logger, runner, weekly reports
+src/main.py         CLI entry point (headless premarket/paper/live)
+tests/              unit + integration tests
 ```
 
 ## Setup
@@ -50,45 +54,66 @@ tests/         unit + integration tests
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-# edit .env with your MT5 broker credentials (or do this from the UI)
+# edit .env: set ADMIN_PASSWORD, MT5 credentials (live mode only)
 ```
 
 `MetaTrader5` requires the MT5 terminal running locally (Windows or Wine).
 Other dependencies are cross-platform.
 
-## Web UI (recommended for non-technical users)
+## Web UI
 
 ```bash
-streamlit run ui/app.py
+python -m webapp.server
 ```
 
-Opens at `http://localhost:8501` with four pages:
+Opens at `http://localhost:8080` (configurable via `WEBAPP_HOST` /
+`WEBAPP_PORT`). Backed by Waitress WSGI — production-grade, runs natively
+on Windows. HTTP Basic Auth: `ADMIN_USERNAME` / `ADMIN_PASSWORD` from
+`.env`. The app refuses to start on a non-localhost bind without a
+password.
+
+Pages:
 
 - **📊 Dashboard** — live equity, today's Fibonacci levels, open position,
-  tranche status, win-rate monitors, recent activity (auto-refreshes every
-  3 s while the bot is running).
+  Half 1 / Half 2 status, weekly stats, v3.2 activity metrics, safety
+  monitors, recent events. **Live-pushed** via Server-Sent Events — no
+  polling, no auto-rerun overhead.
 - **⚙️ Settings** — broker credentials, risk %, starting equity, mode
-  (paper / live / dryrun), and all 28 strategy feature flags with plain-
-  English descriptions. Saves to `.env`.
-- **🧪 Backtest** — pick a date range, click Run, see the equity curve,
-  drawdown chart, win rate, and per-trade table (downloadable as CSV).
-- **📜 Logs** — filterable event log with download buttons.
+  (paper / live / dryrun), all strategy feature flags grouped by version
+  with plain-English descriptions. Saves to `.env` over HTTP.
+- **🧪 Backtest** — date-range backtest with Plotly equity + drawdown
+  charts, per-trade table, CSV download.
+- **📜 Logs** — filterable JSONL event viewer with download.
 
-The sidebar has **▶ Start** / **■ Stop** buttons and shows live status.
-In paper mode (default), Start replays the last ~30 trading days through
-the engine at accelerated speed — no broker required.
+Sidebar shows **▶ Start / ■ Stop** controls, live status badge, and a
+red error banner if the engine throws. Paper mode (default) replays the
+last ~30 trading days through the live engine code path for demos.
 
-## CLI usage
+### REST API
+
+All endpoints under `/api`, JSON in/out, HTTP Basic Auth:
+
+```
+GET  /api/status            full snapshot (premarket, position, week, monitors)
+GET  /api/status/lite       minimal payload for cheap polling
+GET  /api/stream            Server-Sent Events: snapshot pushed every ~2s
+POST /api/control/start     start the engine
+POST /api/control/stop      stop the engine
+GET  /api/settings          current Settings
+POST /api/settings          update + persist to .env
+GET  /api/flags             all feature flag values
+POST /api/flags             {KEY: bool, ...} — toggle flags at runtime
+POST /api/backtest          {start, end, starting_equity} → equity curve + trades
+GET  /api/logs              ?kind=trade_open&limit=200
+GET  /api/health            unauthenticated health check
+```
+
+## CLI usage (headless, no web UI)
 
 ```bash
-# inspect today's pre-market context
-python -m src.main premarket
-
-# run paper-trading loop (no broker required)
-python -m src.main paper
-
-# run live (requires MT5 terminal + credentials in .env)
-python -m src.main live
+python -m src.main premarket   # inspect today's pre-market context
+python -m src.main paper        # paper-trading loop
+python -m src.main live         # live (MT5 required)
 ```
 
 ## Tests
