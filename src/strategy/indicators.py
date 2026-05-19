@@ -58,3 +58,11 @@ def median_range(df: pd.DataFrame, lookback: int) -> float:
         raise ValueError(f"Need at least {lookback} bars for median range, got {len(df)}")
     ranges = (df["high"] - df["low"]).tail(lookback)
     return float(ranges.median())
+
+
+def sma(values: Sequence[float], period: int) -> float:
+    """Simple moving average — final value."""
+    if len(values) < period:
+        raise ValueError(f"Need at least {period} values for SMA({period}), got {len(values)}")
+    s = pd.Series(values, dtype=float).tail(period)
+    return float(s.mean())

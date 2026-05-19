@@ -59,7 +59,7 @@ with st.form("settings_form"):
                               min_value=0.5, max_value=5.0,
                               value=float(settings.risk_pct * 100),
                               step=0.25,
-                              help="Default 3.0% per v3.0 spec. Auto-reduced to 2.0% "
+                              help="Default 3.0% per v3.2 spec. Auto-reduced to 2.0% "
                                     "or 1.5% by the safety monitors if win rate drops.")
         magic = st.number_input("Magic number",
                                   value=int(settings.magic_number), step=1,
@@ -127,7 +127,7 @@ if submit:
 
 st.markdown("---")
 st.subheader("Strategy filters & optimisations")
-st.caption("All 28 toggles default ON (v3.0 production config). "
+st.caption("All toggles default ON (v3.2 production config). "
             "Switch to OFF only for A/B testing. Changes take effect "
             "immediately for the next signal evaluation.")
 
@@ -153,24 +153,38 @@ flag_groups = {
         ("FIX_L8_ROUNDING_AUDIT", "Warn if lot rounding shifts actual risk by >5%"),
         ("FIX_L9_FAST_WINRATE_MONITOR", "20-trade fast brake on win rate drops"),
     ],
-    "v3.0 optimisations": [
+    "v3.0 / 3.1 optimisations": [
         ("OPT_STEP1_BODY_60PCT", "Require confirmation candle body ≥ 60% of range"),
         ("OPT_STEP2_4H_TREND_HARD", "Hard block trades against the 4-hour trend"),
         ("OPT_STEP3_RSI_ZONE", "Only enter when RSI is in the neutral momentum zone"),
         ("OPT_STEP4_RETEST_CONFIRM", "Require re-test or clean continuation after breakout"),
-        ("OPT_THREE_TRANCHE_EXIT", "Use 40/30/30 three-tranche exit (vs 50/50)"),
+        ("OPT_50_50_EXIT", "Use 50/50 exit (v3.1) — half at TP1, half at TP2"),
+        ("OPT_SESSION_FORCE_CLOSE_2055", "Partial-close at 20:55 UTC (no overnight risk)"),
         ("OPT_BREAKEVEN_PLUS", "Move stop to entry + 30% of TP1 gain after TP1 hit"),
         ("OPT_TP1_TIME_ACCEL", "Move TP1 closer at 15:30 NY if not yet hit"),
         ("OPT_SEASONAL_SIZING", "Adjust long position size by month (gold seasonality)"),
         ("OPT_REGIME_DETECTOR", "Switch parameters by volatility regime"),
         ("OPT_3PCT_RISK", "Use 3% base risk (vs 2% in v2.0)"),
     ],
+    "v3.2 return enhancements": [
+        ("OPT_1_COMEX_VOL_CONTINUATION",
+         "Exit Half 2 early when COMEX volume fades (2 bars < 50% of avg)"),
+        ("OPT_2_BACK_TO_BACK_TP2",
+         "Push TP2 further out when yesterday closed at TP2"),
+        ("OPT_3_HIGH_ATR_TP2_EXTENSION",
+         "Push TP2 to 115% on high-energy days (range 1.3–1.8× ATR)"),
+        ("OPT_4_SMA200_SHORT_FILTER",
+         "Block short trades when price is above the 200-day SMA"),
+        ("OPT_5_WEDNESDAY_ACCEL",
+         "On Wednesdays, accelerate TP1 earlier (14:30 NY, tighter 70% target)"),
+        ("OPT_6_RSI_POST_TP1_TRIM",
+         "Trim 25% of Half 2 if RSI is overextended right after TP1"),
+    ],
 }
 
-cols = st.columns(3)
-for col, (group_name, items) in zip(cols, flag_groups.items()):
-    with col:
-        st.markdown(f"**{group_name}**")
+tabs = st.tabs(list(flag_groups.keys()))
+for tab, (group_name, items) in zip(tabs, flag_groups.items()):
+    with tab:
         for key, label in items:
             current = getattr(FLAGS, key)
             new_val = st.checkbox(label, value=current, key=f"flag_{key}")

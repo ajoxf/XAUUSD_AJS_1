@@ -8,8 +8,8 @@ from tests.conftest import synthetic_daily, synthetic_h4
 
 
 def _ctx(d=date(2024, 6, 25)):
-    df = synthetic_daily(d, n=60, daily_range=30.0)
-    h4 = synthetic_h4(datetime(d.year, d.month, d.day, 13, 30, tzinfo=timezone.utc), n=60)
+    df = synthetic_daily(d, n=220, daily_range=30.0)
+    h4 = synthetic_h4(datetime(d.year, d.month, d.day, 13, 30, tzinfo=timezone.utc), n=220)
     return premarket.build_premarket(d, df, h4["close"])
 
 

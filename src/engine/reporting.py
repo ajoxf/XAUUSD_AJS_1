@@ -1,4 +1,4 @@
-"""Weekly performance report — spec §10."""
+"""Weekly performance report — spec §10 v3.2."""
 from __future__ import annotations
 
 from datetime import date
@@ -9,9 +9,8 @@ from src.engine.state import EngineState
 
 def weekly_report(state: EngineState, week_ending: date, equity: float,
                   equity_start_of_week: float) -> Dict:
-    wins_tp1 = state.week_wins_tp1
     trades = max(state.week_trades, 1)
-    wr_tp1 = wins_tp1 / trades * 100.0
+    wr_tp1 = state.week_wins_tp1 / trades * 100.0
     wr_tp2 = state.week_wins_tp2 / trades * 100.0
     sl_rate = state.week_sls / trades * 100.0
 
@@ -27,6 +26,7 @@ def weekly_report(state: EngineState, week_ending: date, equity: float,
             "atr_floor": state.gate_block_atr_floor,
             "atr_cap": state.gate_block_atr_cap,
             "trend_alignment": state.gate_block_trend,
+            "sma200_short_filter": state.gate_block_sma200,
             "daily_lock": state.gate_block_daily_lock,
             "no_signal": state.gate_block_no_signal,
         },
@@ -41,7 +41,13 @@ def weekly_report(state: EngineState, week_ending: date, equity: float,
             "sl_rate_pct": round(sl_rate, 2),
             "regime_exits": state.week_regime_exits,
             "tp1_accelerations": state.week_tp1_accels,
-            "tranche_3_extended_wins": state.week_t3_extended,
+            "wednesday_accelerations": state.week_wednesday_accels,
+            "comex_volume_exits": state.week_comex_vol_exits,
+            "rsi_post_tp1_trims": state.week_rsi_trims,
+            "back_to_back_tp2_extensions": state.week_back_to_back_tp2,
+            "high_atr_tp2_extensions": state.week_high_atr_tp2,
+            "session_close_half2": state.week_session_close_half2,
+            "session_close_full_no_tp1": state.week_session_close_full,
         },
         "financials": {
             "net_pnl_this_week": round(equity - equity_start_of_week, 2),
@@ -68,7 +74,13 @@ def reset_week(state: EngineState) -> None:
     state.week_sls = 0
     state.week_regime_exits = 0
     state.week_tp1_accels = 0
-    state.week_t3_extended = 0
+    state.week_wednesday_accels = 0
+    state.week_comex_vol_exits = 0
+    state.week_rsi_trims = 0
+    state.week_back_to_back_tp2 = 0
+    state.week_high_atr_tp2 = 0
+    state.week_session_close_half2 = 0
+    state.week_session_close_full = 0
     state.week_b_fails = 0
     state.week_c_fails = 0
     state.week_d_fails = 0
@@ -76,5 +88,6 @@ def reset_week(state: EngineState) -> None:
     state.gate_block_atr_floor = 0
     state.gate_block_atr_cap = 0
     state.gate_block_trend = 0
+    state.gate_block_sma200 = 0
     state.gate_block_daily_lock = 0
     state.gate_block_no_signal = 0

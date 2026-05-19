@@ -29,7 +29,7 @@ def paper_broker(settings: Settings) -> PaperAdapter:
     return broker
 
 
-def synthetic_daily(end_date: date, n: int = 60,
+def synthetic_daily(end_date: date, n: int = 220,
                     base_price: float = 2000.0,
                     daily_range: float = 25.0,
                     drift: float = 0.0,

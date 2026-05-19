@@ -1,4 +1,4 @@
-"""Pre-trade gates — spec §3. Every gate must pass before signal accepted."""
+"""Pre-trade gates — spec §3 v3.2. Every gate must pass before signal accepted."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -73,9 +73,21 @@ def _check_g5_trend(ctx: PremarketContext, direction: str) -> List[str]:
     return []
 
 
-def _check_g6_floor(ctx: PremarketContext, settings: Settings) -> List[str]:
+def _check_g6_sma200_short(ctx: PremarketContext, direction: str) -> List[str]:
+    """v3.2 Opt 4: block shorts when price is above the 200-day SMA."""
+    if not FLAGS.OPT_4_SMA200_SHORT_FILTER:
+        return []
+    if direction != "SHORT":
+        return []
+    if ctx.prev_close > ctx.sma200_daily:
+        return [f"G6: short blocked — price {ctx.prev_close:.2f} > "
+                f"SMA200 {ctx.sma200_daily:.2f}"]
+    return []
+
+
+def _check_g7_floor(ctx: PremarketContext, settings: Settings) -> List[str]:
     if ctx.range < settings.min_range_floor:
-        return [f"G6: range {ctx.range:.2f} < floor {settings.min_range_floor}"]
+        return [f"G7: range {ctx.range:.2f} < floor {settings.min_range_floor}"]
     return []
 
 
@@ -93,5 +105,6 @@ def check_all_gates(
     failures += _check_g3_events(ctx)
     failures += _check_g4_daily_lock(daily_fired, position_open)
     failures += _check_g5_trend(ctx, direction)
-    failures += _check_g6_floor(ctx, settings)
+    failures += _check_g6_sma200_short(ctx, direction)
+    failures += _check_g7_floor(ctx, settings)
     return GateResult(passed=(len(failures) == 0), failures=failures)

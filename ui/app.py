@@ -1,4 +1,4 @@
-"""XAUUSD Fibonacci Range Bot v3.0 — Streamlit UI.
+"""XAUUSD Fibonacci Range Bot v3.2 — Streamlit UI.
 
 Launch with:
     streamlit run ui/app.py
@@ -10,7 +10,7 @@ import streamlit as st
 from ui.components import get_settings, sidebar_controls
 
 st.set_page_config(
-    page_title="XAUUSD Fib Bot v3.0",
+    page_title="XAUUSD Fib Bot v3.2",
     page_icon="🟡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -19,7 +19,7 @@ st.set_page_config(
 settings = get_settings()
 sidebar_controls()
 
-st.title("XAUUSD Fibonacci Range Strategy — v3.0")
+st.title("XAUUSD Fibonacci Range Strategy — v3.2")
 st.markdown(
     """
     This bot trades **Gold spot (XAU/USD)** using prior-day Fibonacci range

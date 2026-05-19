@@ -7,8 +7,8 @@ from tests.conftest import synthetic_daily, synthetic_h4
 
 
 def _ctx(d=date(2024, 6, 25)):
-    df = synthetic_daily(d, n=60, daily_range=30.0)
-    h4 = synthetic_h4(datetime(d.year, d.month, d.day, 13, 30, tzinfo=timezone.utc), n=60)
+    df = synthetic_daily(d, n=220, daily_range=30.0)
+    h4 = synthetic_h4(datetime(d.year, d.month, d.day, 13, 30, tzinfo=timezone.utc), n=220)
     return premarket.build_premarket(d, df, h4["close"])
 
 
@@ -29,13 +29,17 @@ def test_basic_long_sizing(settings):
                           abs=settings.lot_step) == s.lots_final
 
 
-def test_three_tranche_split_pcts(settings):
+def test_50_50_split_pcts(settings):
+    """v3.2: 50/50 split — H1 = tranche_1, H2 = tranche_2, tranche_3 unused."""
     ctx = _ctx()
     s = sizing.compute_size(ctx, settings, "LONG", ctx.long_entry, 100_000.0)
-    # T1 ≈ 40%, T2 ≈ 30%, T3 = residual
     total = s.tranche_1 + s.tranche_2 + s.tranche_3
-    assert s.tranche_1 / total == pytest.approx(0.40, abs=0.05)
-    assert s.tranche_2 / total == pytest.approx(0.30, abs=0.05)
+    assert s.tranche_3 == 0.0
+    assert s.tranche_1 / total == pytest.approx(0.50, abs=0.02)
+    assert s.tranche_2 / total == pytest.approx(0.50, abs=0.02)
+    # Backward-compat accessors
+    assert s.half_1 == s.tranche_1
+    assert s.half_2 == s.tranche_2
 
 
 def test_seasonal_long_applied(settings):

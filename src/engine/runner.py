@@ -1,4 +1,7 @@
-"""Main engine — orchestrates pre-market, gates, entry detection, and exits."""
+"""Main engine — orchestrates pre-market, gates, entry detection, and exits.
+
+v3.2: 50/50 exit, 20:55 UTC partial close, six return-enhancement opts.
+"""
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -13,6 +16,7 @@ from src.engine.logger import StructuredLogger
 from src.engine.state import EngineState
 from src.strategy import entry as entry_mod
 from src.strategy import exits, gates, premarket, session, sizing
+from src.strategy.comex_volume import ComexVolumeTracker
 from src.strategy.entry import Candle, Direction
 from src.strategy.exits import CloseReason, PositionState, TrancheState
 from src.strategy.premarket import PremarketContext
@@ -27,6 +31,7 @@ class Engine:
         broker: BrokerAdapter,
         feed: DataFeed,
         logger: StructuredLogger,
+        comex_tracker: Optional[ComexVolumeTracker] = None,
     ):
         self.settings = settings
         self.broker = broker
@@ -38,6 +43,7 @@ class Engine:
             peak_equity=equity,
             win_rate_monitor=WinRateMonitor(base_risk=settings.risk_pct),
             circuit_breaker=CircuitBreaker(starting_equity=equity),
+            comex_tracker=comex_tracker,
         )
 
     # ── Daily lifecycle ───────────────────────────────────
@@ -45,18 +51,25 @@ class Engine:
         self.state.today = today
         self.state.daily_lock.reset()
         self.state.loss_counter.reset_for_new_day(today)
+        self.state.closes_15m_post_tp1 = []
         try:
-            daily_df = self.feed.daily(self.settings.symbol, today, lookback_days=60)
-            # h4 ending at session start of today
+            daily_df = self.feed.daily(self.settings.symbol, today, lookback_days=210)
             session_start_utc, _ = session.session_window_utc(today)
             h4_df = self.feed.h4(self.settings.symbol, session_start_utc, lookback_bars=60)
-            ctx = premarket.build_premarket(today, daily_df, h4_df["close"])
+            ctx = premarket.build_premarket(
+                today, daily_df, h4_df["close"],
+                prev_session_close_type=self.state.prev_session_close_type,
+            )
         except Exception as exc:
             self.log.warn(f"Pre-market build failed for {today}: {exc}")
             self.state.premarket = None
             return None
 
         self.state.premarket = ctx
+        if ctx.back_to_back_active:
+            self.state.week_back_to_back_tp2 += 1
+        if ctx.high_atr_extension_active:
+            self.state.week_high_atr_tp2 += 1
         self.log.event("premarket", _premarket_payload(ctx))
         return ctx
 
@@ -69,7 +82,6 @@ class Engine:
         next_candle: Optional[Candle],
         closes_15m: Sequence[float],
     ) -> bool:
-        """Returns True if a trade was opened."""
         ctx = self.state.premarket
         if ctx is None:
             return False
@@ -125,8 +137,6 @@ class Engine:
             self.log.warn(f"Circuit breaker tripped at equity {equity:.2f}")
             return False
 
-        # For continuation entries we enter at next candle open ≈ confirmation close.
-        # Use live ask/bid for realism; tests stub via paper adapter.
         quote = self.broker.quote(self.settings.symbol)
         entry_price = quote.ask if direction == Direction.LONG else quote.bid
         if quote.spread > self.settings.max_spread_per_oz:
@@ -144,20 +154,19 @@ class Engine:
         tp1 = ctx.long_tp1 if direction == Direction.LONG else ctx.short_tp1
         tp2 = ctx.long_tp2 if direction == Direction.LONG else ctx.short_tp2
 
-        # Open three tranches (broker-side). Each carries its own TP.
-        tranche_specs = [
-            ("T1", sized.tranche_1, tp1),
-            ("T2", sized.tranche_2, tp2),
-            ("T3", sized.tranche_3, None),
+        # v3.2 — 50/50 split: open ONE order, partial-close at TP1
+        half_specs = [
+            ("H1", sized.half_1, tp1),
+            ("H2", sized.half_2, tp2),
         ]
         tickets = []
         tranche_states: List[TrancheState] = []
-        for name, lots, tp in tranche_specs:
+        for name, lots, tp in half_specs:
             if lots < self.settings.lot_step:
                 continue
             ticket = self.broker.open_market(
                 symbol=self.settings.symbol, side=side, volume_lots=lots,
-                sl=sl, tp=tp, comment=f"v3.0 {name}",
+                sl=sl, tp=tp, comment=f"v3.2 {name}",
                 magic=self.settings.magic_number,
                 max_slippage_per_oz=self.settings.max_slippage_per_oz,
             )
@@ -189,7 +198,11 @@ class Engine:
             "entry_price": entry_price,
             "candle_body_ratio": entry_mod._body_ratio(confirmation_candle),
             "sl": sl, "tp1": tp1, "tp2": tp2,
-            **{k: v for k, v in asdict(sized).items() if k not in ("direction", "entry_price", "stop_loss")},
+            "tp2_fib": ctx.long_tp2_fib if direction == Direction.LONG else ctx.short_tp2_fib,
+            "back_to_back_active": ctx.back_to_back_active,
+            "high_atr_extension_active": ctx.high_atr_extension_active,
+            **{k: v for k, v in asdict(sized).items()
+               if k not in ("direction", "entry_price", "stop_loss")},
             "active_risk_pct": active_risk,
             "equity_at_open": equity,
             "tickets": [t.broker_id for t in tickets],
@@ -205,16 +218,36 @@ class Engine:
         if ctx is None:
             return
 
-        # Time-based TP1 acceleration
+        # TP1 acceleration (Wednesday early, then standard)
         if exits.maybe_accelerate_tp1(ctx, pos, self.settings, now_utc):
             self.state.week_tp1_accels += 1
-            self.log.event("tp1_accelerated", {"new_tp1": pos.accelerated_tp1_price})
-            # propagate to broker T1 ticket
-            t1_ticket = next((t for t in self.state.tickets if t.comment.endswith("T1")), None)
-            if t1_ticket and pos.accelerated_tp1_price is not None:
-                self.broker.modify_tp(t1_ticket, pos.accelerated_tp1_price)
+            if pos.accelerated_kind == "WEDNESDAY":
+                self.state.week_wednesday_accels += 1
+            self.log.event("tp1_accelerated", {
+                "kind": pos.accelerated_kind,
+                "new_tp1": pos.accelerated_tp1_price,
+            })
+            # propagate to broker ticket (H1)
+            h1_ticket = next((t for t in self.state.tickets
+                              if t.comment.endswith("H1")), None)
+            if h1_ticket and pos.accelerated_tp1_price is not None:
+                self.broker.modify_tp(h1_ticket, pos.accelerated_tp1_price)
 
-        # Session-end forced close
+        # 20:55 UTC partial close decision tree (v3.2)
+        if FLAGS.OPT_SESSION_FORCE_CLOSE_2055:
+            closed_2055 = exits.maybe_2055_force_close(ctx, pos, self.settings,
+                                                         tick_price, now_utc)
+            for t in closed_2055:
+                self._record_close(t)
+                if t.close_reason == CloseReason.SESSION_CLOSE_HALF2:
+                    self.state.week_session_close_half2 += 1
+                elif t.close_reason == CloseReason.SESSION_CLOSE_FULL_NO_TP1:
+                    self.state.week_session_close_full += 1
+            if closed_2055 and pos.closed:
+                self._post_trade_bookkeeping(pos)
+                return
+
+        # 21:00 UTC safety net
         end_utc = session.session_end_utc(ctx.trade_date)
         if now_utc >= end_utc and not pos.closed:
             closed = exits.force_close_session_end(pos, tick_price, now_utc)
@@ -222,6 +255,20 @@ class Engine:
                 self._record_close(t)
             self._post_trade_bookkeeping(pos)
             return
+
+        # COMEX volume fade exit (Opt 1) — only after TP1
+        if pos.tp1_hit and not pos.tp2_hit:
+            h2 = exits.maybe_comex_volume_exit(pos, self.state.comex_tracker, now_utc)
+            if h2 is not None and h2.is_open:
+                h2.is_open = False
+                h2.close_price = tick_price
+                h2.close_reason = CloseReason.COMEX_VOL_FADE
+                h2.close_time_utc = now_utc
+                self.state.week_comex_vol_exits += 1
+                self._record_close(h2)
+                pos.closed = True
+                self._post_trade_bookkeeping(pos)
+                return
 
         update = exits.apply_tick(ctx, pos, self.settings, tick_price, now_utc)
         if update.stop_moved and update.new_stop is not None:
@@ -234,13 +281,35 @@ class Engine:
         if pos.is_fully_closed or pos.closed:
             self._post_trade_bookkeeping(pos)
 
+    # ── Opt 6: RSI trim hook (caller feeds post-TP1 15m closes) ──
+    def feed_post_tp1_close(self, close_15m: float, now_utc: datetime) -> None:
+        """Caller invokes this after each 15m candle closes once TP1 is hit.
+        Triggers the one-shot RSI trim check."""
+        pos = self.state.position
+        if pos is None or not pos.tp1_hit or pos.rsi_trim_done or pos.closed:
+            return
+        self.state.closes_15m_post_tp1.append(close_15m)
+        trim = exits.maybe_rsi_trim(pos, self.state.closes_15m_post_tp1,
+                                     self.settings, now_utc)
+        if trim is None:
+            return
+        # Partial-close on the H2 broker ticket
+        h2_ticket = next((t for t in self.state.tickets
+                           if t.comment.endswith("H2")), None)
+        if h2_ticket is not None:
+            try:
+                self.broker.close(h2_ticket, trim["trim_lots"])
+            except Exception as exc:
+                self.log.warn(f"RSI trim partial close failed: {exc}")
+        self.state.week_rsi_trims += 1
+        self.log.event("rsi_post_tp1_trim", trim)
+
     # ── Close bookkeeping ─────────────────────────────────
     def _record_close(self, t: TrancheState) -> None:
-        # Map tranche to broker ticket and close
         ticket = next((x for x in self.state.tickets if x.comment.endswith(t.name)), None)
         if ticket is not None and ticket.volume_lots > 0:
             try:
-                self.broker.close(ticket, t.lots)
+                self.broker.close(ticket, min(t.lots, ticket.volume_lots))
             except Exception as exc:
                 self.log.warn(f"Broker close failed for {t.name}: {exc}")
         self.log.event("tranche_close", {
@@ -264,9 +333,6 @@ class Engine:
             self.state.week_regime_exits += 1
         if any_initial_sl and not any_tp1:
             self.state.week_sls += 1
-        if any(t.close_reason == CloseReason.TRAIL_STOP and t.name == "T3"
-               for t in pos.tranches):
-            self.state.week_t3_extended += 1
 
         equity = self.broker.equity()
         self.state.update_peak(equity)
@@ -277,12 +343,18 @@ class Engine:
         )
         self.state.circuit_breaker.check(equity, self.settings, datetime.utcnow())
 
+        # v3.2: persist this trade's outcome for tomorrow's Opt 2 check
+        outcome = pos.overall_close_type()
+        if outcome is not None:
+            self.state.prev_session_close_type = outcome
+
         self.state.position = None
         self.state.tickets = []
+        self.state.closes_15m_post_tp1 = []
 
     def _record_gate_block(self, failures: List[str]) -> None:
         for f in failures:
-            if f.startswith("G1: range") and "ATR20" in f and "< ATR20" in f:
+            if f.startswith("G1: range") and "< ATR20" in f:
                 self.state.gate_block_atr_floor += 1
             elif f.startswith("G1: range") and ">" in f:
                 self.state.gate_block_atr_cap += 1
@@ -292,6 +364,8 @@ class Engine:
                 self.state.gate_block_daily_lock += 1
             elif f.startswith("G5:"):
                 self.state.gate_block_trend += 1
+            elif f.startswith("G6:"):
+                self.state.gate_block_sma200 += 1
 
 
 def _premarket_payload(ctx: PremarketContext) -> dict:
@@ -300,6 +374,7 @@ def _premarket_payload(ctx: PremarketContext) -> dict:
         "range": ctx.range,
         "atr_20": ctx.atr_20,
         "atr_50": ctx.atr_50,
+        "sma200_daily": ctx.sma200_daily,
         "regime": ctx.regime,
         "regime_ratio": ctx.regime_ratio,
         "trend_bias": ctx.trend_bias,
@@ -307,15 +382,20 @@ def _premarket_payload(ctx: PremarketContext) -> dict:
         "short_entry": ctx.short_entry,
         "long_tp1": ctx.long_tp1,
         "long_tp2": ctx.long_tp2,
+        "long_tp2_fib": ctx.long_tp2_fib,
         "short_tp1": ctx.short_tp1,
         "short_tp2": ctx.short_tp2,
+        "short_tp2_fib": ctx.short_tp2_fib,
         "filter_c_active": ctx.filter_c_active,
         "long_filter_f": ctx.long_filter_f,
         "short_filter_f": ctx.short_filter_f,
+        "back_to_back_active": ctx.back_to_back_active,
+        "high_atr_extension_active": ctx.high_atr_extension_active,
         "trail_distance_base": ctx.trail_distance_base,
         "session_start_utc": ctx.session_start_utc,
         "session_end_utc": ctx.session_end_utc,
         "event_blocked": ctx.event_blocked,
         "event_reason": ctx.event_reason,
         "seasonal_mult_long": ctx.seasonal_mult_long,
+        "prev_session_close_type": ctx.prev_session_close_type,
     }

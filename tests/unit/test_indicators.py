@@ -44,6 +44,17 @@ def test_rsi_insufficient():
         indicators.rsi([1, 2, 3], 14)
 
 
+def test_sma_basic():
+    val = indicators.sma([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5)
+    # Last 5 = [6,7,8,9,10] → mean 8.0
+    assert val == pytest.approx(8.0)
+
+
+def test_sma_insufficient():
+    with pytest.raises(ValueError):
+        indicators.sma([1, 2, 3], 5)
+
+
 def test_median_range():
     df = pd.DataFrame({
         "high": [10, 12, 11, 13, 14, 10, 11, 12, 13, 14],

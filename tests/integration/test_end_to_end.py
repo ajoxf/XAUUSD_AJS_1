@@ -51,7 +51,7 @@ class StubFeed(DataFeed):
 
 def _make_engine(tmp_path: Path, trade_date: date,
                  base_price: float = 2000.0, daily_range: float = 30.0):
-    daily = synthetic_daily(trade_date, n=60, base_price=base_price,
+    daily = synthetic_daily(trade_date, n=220, base_price=base_price,
                             daily_range=daily_range)
     # Force prev_close above EMA50_4H to lock trend_bias = LONG_ONLY
     daily.loc[daily.index[-1], "close"] = base_price + 80
@@ -60,7 +60,7 @@ def _make_engine(tmp_path: Path, trade_date: date,
     daily.loc[daily.index[-1], "open"] = base_price + 70
     h4 = synthetic_h4(datetime(trade_date.year, trade_date.month,
                                 trade_date.day, 13, 30, tzinfo=timezone.utc),
-                      n=60, start_price=base_price)
+                      n=220, start_price=base_price)
     feed = StubFeed(daily, h4)
 
     settings = Settings(
@@ -117,15 +117,15 @@ def test_full_day_long_tp1_then_trail(tmp_path):
     assert fired, "Trade should have opened"
     assert engine.state.position is not None
     pos = engine.state.position
-    assert len(pos.tranches) == 3
+    assert len(pos.tranches) == 2   # v3.2 — 50/50 split (H1, H2)
 
     # Drive price up through TP1
     engine.on_tick(ctx.long_tp1 + 0.5,
                    ctx.session_start_utc + timedelta(hours=1))
-    t1 = next(t for t in pos.tranches if t.name == "T1")
+    h1 = next(t for t in pos.tranches if t.name == "H1")
     if not pos.closed:   # regime override might fully close in RANGING
-        assert not t1.is_open
-        assert t1.close_reason == CloseReason.TP1
+        assert not h1.is_open
+        assert h1.close_reason == CloseReason.TP1
         # Stop moved to breakeven-plus
         assert pos.current_stop > pos.entry_price
 

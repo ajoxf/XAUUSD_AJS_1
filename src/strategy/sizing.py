@@ -1,4 +1,9 @@
-"""Position sizing — spec §5. 3% base risk + seasonal + alignment + regime."""
+"""Position sizing — spec §5 v3.2. 3% base risk + seasonal + alignment + regime.
+
+v3.2 uses a 50/50 split (Half 1 → TP1, Half 2 → TP2). The result still
+exposes `tranche_1/2/3` for back-compat with the engine: H1=tranche_1,
+H2=tranche_2, tranche_3=0.0 (unused).
+"""
 from __future__ import annotations
 
 import math
@@ -24,13 +29,22 @@ class SizingResult:
     regime_mult: float
     lots_final: float
 
+    # 50/50 split: H1 = tranche_1, H2 = tranche_2
     tranche_1: float
     tranche_2: float
-    tranche_3: float
+    tranche_3: float       # always 0.0 in v3.2 — kept for back-compat
 
     actual_risk: float
     deviation_pct: float
     warning: bool
+
+    @property
+    def half_1(self) -> float:
+        return self.tranche_1
+
+    @property
+    def half_2(self) -> float:
+        return self.tranche_2
 
 
 def _floor_to_step(value: float, step: float) -> float:
@@ -64,7 +78,9 @@ def compute_size(
     else:
         seasonal_mult = 1.0
 
-    alignment_mult = 0.50 if (FLAGS.OPT_STEP2_4H_TREND_HARD and ctx.trend_bias == "BOTH") else 1.0
+    alignment_mult = (
+        0.50 if (FLAGS.OPT_STEP2_4H_TREND_HARD and ctx.trend_bias == "BOTH") else 1.0
+    )
 
     if FLAGS.OPT_REGIME_DETECTOR and ctx.regime == "RANGING":
         regime_mult = 0.80
@@ -77,20 +93,22 @@ def compute_size(
         settings.lot_step,
     )
 
-    if FLAGS.OPT_THREE_TRANCHE_EXIT:
-        t1 = max(_floor_to_step(lots_final * settings.tranche_1_pct, settings.lot_step),
+    if FLAGS.OPT_50_50_EXIT:
+        h1 = max(_floor_to_step(lots_final / 2.0, settings.lot_step),
                  settings.lot_step)
-        t2 = max(_floor_to_step(lots_final * settings.tranche_2_pct, settings.lot_step),
-                 settings.lot_step)
+        h2 = round(lots_final - h1, 4)
+        if h2 < settings.lot_step:
+            h2 = settings.lot_step
+            h1 = max(round(lots_final - h2, 4), settings.lot_step)
+        t1, t2, t3 = h1, h2, 0.0
+    else:
+        # Legacy 3-tranche 40/30/30 split — kept for A/B testing
+        t1 = max(_floor_to_step(lots_final * 0.40, settings.lot_step), settings.lot_step)
+        t2 = max(_floor_to_step(lots_final * 0.30, settings.lot_step), settings.lot_step)
         t3 = round(lots_final - t1 - t2, 4)
         if t3 < settings.lot_step:
-            # Tiny final position — fold residual into t1
-            t1 = round(t1 + t3, 4) if t3 > 0 else t1
+            t1 = round(t1 + max(t3, 0.0), 4) if t3 >= 0 else t1
             t3 = 0.0
-    else:
-        t1 = max(_floor_to_step(lots_final * 0.50, settings.lot_step), settings.lot_step)
-        t2 = round(lots_final - t1, 4)
-        t3 = 0.0
 
     actual_risk = lots_final * settings.contract_size * sl_distance
     deviation_pct = abs(actual_risk - risk_amount) / risk_amount * 100.0
@@ -108,9 +126,7 @@ def compute_size(
         alignment_mult=alignment_mult,
         regime_mult=regime_mult,
         lots_final=lots_final,
-        tranche_1=t1,
-        tranche_2=t2,
-        tranche_3=t3,
+        tranche_1=t1, tranche_2=t2, tranche_3=t3,
         actual_risk=actual_risk,
         deviation_pct=deviation_pct,
         warning=warning,
