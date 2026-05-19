@@ -13,7 +13,6 @@ from flask import (Blueprint, Response, current_app, jsonify, request,
 
 from config.flags import FLAGS, FeatureFlags
 from config.settings import Settings
-from webapp.auth import requires_auth
 from webapp.backtest import run_backtest
 from webapp.supervisor import EngineSupervisor
 
@@ -30,7 +29,6 @@ def _settings() -> Settings:
 
 # ── Status / snapshot ───────────────────────────────────
 @bp.get("/status")
-@requires_auth
 def status():
     sup = _supervisor()
     snap = sup.snapshot(recent_events_limit=30)
@@ -38,7 +36,6 @@ def status():
 
 
 @bp.get("/status/lite")
-@requires_auth
 def status_lite():
     """Minimal payload for high-frequency polling fallback."""
     sup = _supervisor()
@@ -53,7 +50,6 @@ def status_lite():
 
 # ── SSE stream ──────────────────────────────────────────
 @bp.get("/stream")
-@requires_auth
 def stream():
     """Server-Sent Events: snapshot pushed every ~2 seconds while connected."""
     sup = _supervisor()
@@ -89,7 +85,6 @@ def stream():
 
 # ── Control ─────────────────────────────────────────────
 @bp.post("/control/start")
-@requires_auth
 def start_bot():
     sup = _supervisor()
     sup.start()
@@ -97,7 +92,6 @@ def start_bot():
 
 
 @bp.post("/control/stop")
-@requires_auth
 def stop_bot():
     sup = _supervisor()
     sup.stop()
@@ -106,7 +100,6 @@ def stop_bot():
 
 # ── Settings ────────────────────────────────────────────
 @bp.get("/settings")
-@requires_auth
 def get_settings():
     s = _settings()
     return jsonify({
@@ -117,12 +110,10 @@ def get_settings():
         "mt5_login": s.mt5_login, "mt5_server": s.mt5_server,
         "mt5_terminal_path": s.mt5_terminal_path,
         "webapp_host": s.webapp_host, "webapp_port": s.webapp_port,
-        "admin_username": s.admin_username,
     })
 
 
 @bp.post("/settings")
-@requires_auth
 def update_settings():
     s = _settings()
     data = request.get_json(silent=True) or request.form.to_dict()
@@ -167,13 +158,11 @@ def _save_env(path: Path, updates: dict) -> None:
 
 # ── Feature flags ───────────────────────────────────────
 @bp.get("/flags")
-@requires_auth
 def get_flags():
     return jsonify({k: getattr(FLAGS, k) for k in vars(FeatureFlags()).keys()})
 
 
 @bp.post("/flags")
-@requires_auth
 def update_flags():
     data = request.get_json(silent=True) or request.form.to_dict()
     updated = {}
@@ -187,7 +176,6 @@ def update_flags():
 
 # ── Backtest ────────────────────────────────────────────
 @bp.post("/backtest")
-@requires_auth
 def backtest():
     data = request.get_json(silent=True) or request.form.to_dict()
     s = _settings()
@@ -229,7 +217,6 @@ def backtest():
 
 # ── Logs ────────────────────────────────────────────────
 @bp.get("/logs")
-@requires_auth
 def get_logs():
     s = _settings()
     path = s.log_dir / "events.jsonl"

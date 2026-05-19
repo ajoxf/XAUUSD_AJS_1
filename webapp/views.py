@@ -4,19 +4,16 @@ from __future__ import annotations
 from flask import Blueprint, current_app, render_template
 
 from config.flags import FLAGS, FeatureFlags
-from webapp.auth import requires_auth
 
 bp = Blueprint("views", __name__)
 
 
 @bp.get("/")
-@requires_auth
 def dashboard():
     return render_template("dashboard.html", page="dashboard")
 
 
 @bp.get("/settings")
-@requires_auth
 def settings_page():
     s = current_app.config["SETTINGS"]
     flag_meta = _flag_descriptions()
@@ -26,13 +23,11 @@ def settings_page():
 
 
 @bp.get("/backtest")
-@requires_auth
 def backtest_page():
     return render_template("backtest.html", page="backtest")
 
 
 @bp.get("/logs")
-@requires_auth
 def logs_page():
     return render_template("logs.html", page="logs")
 

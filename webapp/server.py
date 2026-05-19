@@ -2,11 +2,14 @@
 
 Usage:
     python -m webapp.server
+
+The web UI binds to WEBAPP_HOST:WEBAPP_PORT (default 127.0.0.1:8080) with
+no authentication. Keep it on localhost. For remote access, terminate at
+a reverse proxy and put auth there.
 """
 from __future__ import annotations
 
 import logging
-import secrets
 import signal
 import sys
 from typing import Optional
@@ -31,20 +34,6 @@ def _configure_logging(level: str) -> None:
 def main(argv: Optional[list[str]] = None) -> int:
     settings = Settings.from_env()
     _configure_logging(settings.log_level)
-
-    if not settings.admin_password:
-        if settings.webapp_host in ("127.0.0.1", "localhost"):
-            log.warning("ADMIN_PASSWORD is empty — running on localhost without auth. "
-                         "Set a password before exposing this port.")
-        else:
-            log.error("ADMIN_PASSWORD must be set for non-localhost binds. Aborting.")
-            return 1
-
-    if not settings.secret_key:
-        log.warning("SECRET_KEY is empty — generating a random one for this run only. "
-                     "Set SECRET_KEY in .env for persistent sessions.")
-        settings = settings.__class__(**{**settings.__dict__,
-                                          "secret_key": secrets.token_hex(32)})
 
     app = create_app(settings)
     tracker = app.config.get("COMEX_TRACKER")

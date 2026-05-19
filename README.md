@@ -70,19 +70,12 @@ Opens at `http://localhost:8080` (configurable via `WEBAPP_HOST` /
 `WEBAPP_PORT`). Backed by Waitress WSGI — production-grade, runs natively
 on Windows.
 
-**Authentication.** Two modes:
-
-- **Localhost, single user (default):** leave `ADMIN_PASSWORD` blank in
-  `.env`. The webapp serves without an auth prompt. Safe because nothing
-  outside your machine can reach `127.0.0.1:8080`.
-- **Any other bind** (LAN, VPS, Tailscale, port-forward): set
-  `ADMIN_PASSWORD` to a strong value. The app **refuses to start** with
-  a non-localhost host and an empty password — this is a guard against
-  accidentally exposing a live trading bot with no auth.
-
-Auth uses HTTP Basic with `hmac.compare_digest` (constant-time). For
-remote access in production, terminate TLS at a reverse proxy (Caddy,
-nginx, Cloudflare Tunnel) so credentials aren't sent in plaintext.
+**No authentication.** The webapp serves directly to whatever address
+`WEBAPP_HOST` binds to. The default `127.0.0.1` keeps it on your local
+machine. If you change `WEBAPP_HOST` to anything else (LAN IP, `0.0.0.0`,
+public interface), put a reverse proxy in front (Caddy, nginx, Cloudflare
+Tunnel) and gate access at that layer. The bot logs a warning at startup
+if you bind beyond localhost.
 
 Pages:
 

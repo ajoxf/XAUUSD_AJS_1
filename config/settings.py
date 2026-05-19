@@ -34,9 +34,6 @@ class Settings:
     # Web UI
     webapp_host: str = "127.0.0.1"
     webapp_port: int = 8080
-    admin_username: str = "admin"
-    admin_password: str = ""
-    secret_key: str = ""
 
     # COMEX webhook
     comex_webhook_host: str = "0.0.0.0"
@@ -78,9 +75,6 @@ class Settings:
             log_dir=Path(os.getenv("LOG_DIR", "logs")),
             webapp_host=os.getenv("WEBAPP_HOST", "127.0.0.1"),
             webapp_port=int(os.getenv("WEBAPP_PORT", "8080")),
-            admin_username=os.getenv("ADMIN_USERNAME", "admin"),
-            admin_password=os.getenv("ADMIN_PASSWORD", ""),
-            secret_key=os.getenv("SECRET_KEY", ""),
             comex_webhook_host=os.getenv("COMEX_WEBHOOK_HOST", "0.0.0.0"),
             comex_webhook_port=int(os.getenv("COMEX_WEBHOOK_PORT", "5050")),
             comex_webhook_enabled=os.getenv("COMEX_WEBHOOK_ENABLED",
