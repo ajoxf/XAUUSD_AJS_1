@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import traceback
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -125,17 +126,30 @@ class EngineSupervisor:
 
     def _run(self) -> None:
         self.logger = StructuredLogger(self.settings.log_dir, level=self.settings.log_level)
+        log.info("Engine starting in %s mode (symbol=%s, risk=%.2f%%)",
+                  self.settings.mode.upper(), self.settings.symbol,
+                  self.settings.risk_pct * 100)
         if self.settings.mode == "live":
             from src.broker.mt5_adapter import MT5Adapter
+            login_mode = "attach" if not self.settings.mt5_login else "credential"
+            log.info("Connecting to MT5 in %s mode…", login_mode)
             self.broker = MT5Adapter(self.settings)
         else:
+            log.info("Paper broker initialised — replaying recent history")
             self.broker = PaperAdapter(starting_equity=self.settings.starting_equity)
-        self.broker.connect()
+        try:
+            self.broker.connect()
+        except Exception as exc:
+            log.error("Broker connection failed: %s", exc)
+            raise
 
         with self._lock:
             self.engine = Engine(self.settings, self.broker,
                                   YFinanceFeed(), self.logger,
                                   comex_tracker=self.comex_tracker)
+        log.info("Engine ready · equity=$%.2f · CB threshold=%.0f%%",
+                  self.broker.equity(),
+                  self.settings.circuit_breaker_pct * 100)
 
         if self.settings.mode == "live":
             self._run_live_loop()
@@ -144,7 +158,9 @@ class EngineSupervisor:
 
     def _run_live_loop(self) -> None:
         self.status = "running"
+        log.info("Live loop started · polling MT5 every 3s · heartbeat every 60s")
         current_day: Optional[date] = None
+        last_heartbeat_console = 0.0
         while not self._stop.is_set():
             now = datetime.now(tz=timezone.utc)
             if now.date() != current_day:
@@ -158,18 +174,56 @@ class EngineSupervisor:
                         self.engine.on_tick(quote.mid, now)
             except Exception as exc:
                 self.logger.warn(f"Live tick failure: {exc}")
+
+            # 60s console heartbeat — current price + open position summary
+            wall = time.time()
+            if wall - last_heartbeat_console > 60.0:
+                last_heartbeat_console = wall
+                self._log_console_heartbeat()
+
             self.last_heartbeat = datetime.now(tz=timezone.utc)
             if self._stop.wait(3.0):
                 break
+        log.info("Live loop stopped")
+
+    def _log_console_heartbeat(self) -> None:
+        try:
+            q = self.broker.quote(self.settings.symbol)
+            equity = self.broker.equity()
+            pos = self.engine.state.position if self.engine else None
+            if pos and not pos.closed:
+                tags = []
+                if pos.tp1_hit: tags.append("TP1✓")
+                if pos.tp2_hit: tags.append("TP2✓")
+                if pos.accelerated_tp1: tags.append(f"accel-{pos.accelerated_kind}")
+                tag = " ".join(tags) or "open"
+                log.info(
+                    "[heartbeat] bid=%.2f ask=%.2f spread=%.2f · equity=$%.2f · "
+                    "POS %s @ %.2f stop=%.2f tp1=%.2f tp2=%.2f %s",
+                    q.bid, q.ask, q.spread, equity,
+                    pos.direction, pos.entry_price, pos.current_stop,
+                    pos.tp1, pos.tp2, tag,
+                )
+            else:
+                log.info(
+                    "[heartbeat] bid=%.2f ask=%.2f spread=%.2f · equity=$%.2f · flat",
+                    q.bid, q.ask, q.spread, equity,
+                )
+        except Exception as exc:
+            log.debug("Heartbeat skipped: %s", exc)
 
     def _run_paper_replay(self) -> None:
         self.status = "running"
+        log.info("Paper replay starting · fetching last 30 trading days from yfinance…")
         try:
             feed = YFinanceFeed()
             end = datetime.now(tz=timezone.utc).date()
             replay = feed.daily(self.settings.symbol, end, lookback_days=30)
+            log.info("Replay loaded %d trading days (%s → %s)",
+                      len(replay), replay.index[0], replay.index[-1])
         except Exception as exc:
             self.last_error = f"yfinance unavailable for replay: {exc}"
+            log.error("Paper replay failed: %s", exc)
             self.status = "error"
             return
 

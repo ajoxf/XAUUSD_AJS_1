@@ -61,8 +61,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    log.info("Starting webapp on http://%s:%d (mode=%s)",
-              settings.webapp_host, settings.webapp_port, settings.mode)
+    log.info("=" * 70)
+    log.info("XAUUSD Fibonacci Range Bot v3.2")
+    log.info("=" * 70)
+    log.info("Mode:        %s", settings.mode.upper())
+    log.info("Symbol:      %s", settings.symbol)
+    log.info("Risk/trade:  %.2f%%", settings.risk_pct * 100)
+    log.info("Circuit BR:  %.0f%%  (halts after this drawdown from start)",
+              settings.circuit_breaker_pct * 100)
+    if settings.mode == "live":
+        mode_label = ("attach to running MT5 terminal"
+                      if not settings.mt5_login
+                      else f"login as account {settings.mt5_login}")
+        log.info("Broker:      MT5 — %s", mode_label)
+    else:
+        log.info("Broker:      paper (yfinance replay)")
+    log.info("Web UI:      http://%s:%d", settings.webapp_host, settings.webapp_port)
+    log.info("Press ▶ Start in the sidebar to begin trading.")
+    log.info("=" * 70)
     serve(app, host=settings.webapp_host, port=settings.webapp_port,
           threads=8, ident="xauusd-bot/3.2")
     return 0

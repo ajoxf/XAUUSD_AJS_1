@@ -1,6 +1,7 @@
 """MetaTrader 5 broker adapter. Requires `MetaTrader5` package + running terminal."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -11,6 +12,8 @@ try:
     import MetaTrader5 as mt5
 except ImportError:
     mt5 = None
+
+log = logging.getLogger("xauusd-bot.mt5")
 
 
 class MT5Adapter(BrokerAdapter):
@@ -81,6 +84,24 @@ class MT5Adapter(BrokerAdapter):
             )
         if not info.visible:
             mt5.symbol_select(self.settings.symbol, True)
+
+        # Final auth-success line for the operator
+        account = mt5.account_info()
+        if account is not None:
+            mode_map = {
+                getattr(mt5, "ACCOUNT_TRADE_MODE_DEMO", 0): "DEMO",
+                getattr(mt5, "ACCOUNT_TRADE_MODE_CONTEST", 1): "CONTEST",
+                getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2): "REAL",
+            }
+            mode_str = mode_map.get(account.trade_mode, str(account.trade_mode))
+            log.info(
+                "MT5 AUTHENTICATED ✓ account=%d (%s) server=%s broker=%s "
+                "balance=%.2f %s leverage=1:%d symbol=%s",
+                account.login, mode_str, account.server,
+                getattr(account, "company", "?"),
+                account.balance, account.currency, account.leverage,
+                self.settings.symbol,
+            )
         self._connected = True
 
     def disconnect(self) -> None:
