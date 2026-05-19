@@ -43,6 +43,7 @@ class SupervisorSnapshot:
     today: Optional[date]
     premarket: Optional[Dict[str, Any]]
     position: Optional[Dict[str, Any]]
+    pending_entry: Optional[Dict[str, Any]]
     week: Dict[str, Any]
     monitor: Dict[str, Any]
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
@@ -62,6 +63,7 @@ class SupervisorSnapshot:
             "today": self.today.isoformat() if self.today else None,
             "premarket": self.premarket,
             "position": self.position,
+            "pending_entry": self.pending_entry,
             "week": self.week,
             "monitor": self.monitor,
             "recent_events": self.recent_events,
@@ -166,6 +168,19 @@ class EngineSupervisor:
         with self._lock:
             self.settings = settings
 
+    # ── Manual confirm / cancel ──────────────────────────
+    def confirm_pending(self) -> bool:
+        with self._lock:
+            if self.engine is None:
+                return False
+            return self.engine.confirm_pending(datetime.now(tz=timezone.utc))
+
+    def cancel_pending(self) -> bool:
+        with self._lock:
+            if self.engine is None:
+                return False
+            return self.engine.cancel_pending(datetime.now(tz=timezone.utc))
+
     # ── Thread body ──────────────────────────────────────
     def _safe_run(self) -> None:
         try:
@@ -187,6 +202,12 @@ class EngineSupervisor:
                 login_mode = "attach" if not self.settings.mt5_login else "credential"
                 log.info("Connecting to MT5 in %s mode…", login_mode)
                 self.broker = MT5Adapter(self.settings)
+            elif self.settings.mode == "dryrun":
+                from src.broker.dryrun_adapter import DryRunAdapter
+                from src.broker.mt5_adapter import MT5Adapter
+                log.info("Dry-run mode: wrapping MT5 reads but blocking all writes")
+                self.broker = DryRunAdapter(MT5Adapter(self.settings),
+                                              symbol=self.settings.symbol)
             else:
                 log.info("Paper broker initialised — replaying recent history")
                 self.broker = PaperAdapter(starting_equity=self.settings.starting_equity)
@@ -391,6 +412,7 @@ class EngineSupervisor:
                        "consecutive_losses": 0, "win_rate_fast_20": None,
                        "win_rate_slow_50": None}
 
+            pending = None
             if engine is not None:
                 state = engine.state
                 today = state.today
@@ -400,6 +422,8 @@ class EngineSupervisor:
                     premarket = _premarket_view(state.premarket)
                 if state.position is not None and not state.position.closed:
                     position = _position_view(state.position)
+                if state.pending_entry is not None:
+                    pending = _pending_view(state.pending_entry)
                 week = _week_view(state)
                 mon = state.win_rate_monitor
                 monitor = {
@@ -420,7 +444,8 @@ class EngineSupervisor:
                 equity=equity, balance=balance, balance_source=balance_source,
                 starting_equity=start_eq, peak_equity=peak,
                 drawdown_pct=drawdown_pct, today=today, premarket=premarket,
-                position=position, week=week, monitor=monitor,
+                position=position, pending_entry=pending,
+                week=week, monitor=monitor,
                 recent_events=self._read_recent_events(recent_events_limit),
             )
 
@@ -497,6 +522,26 @@ def _premarket_view(ctx) -> Dict[str, Any]:
         "event_blocked": ctx.event_blocked, "event_reason": ctx.event_reason,
         "seasonal_mult_long": ctx.seasonal_mult_long,
         "prev_session_close_type": ctx.prev_session_close_type,
+    }
+
+
+def _pending_view(pe) -> Dict[str, Any]:
+    now = datetime.now(tz=timezone.utc)
+    return {
+        "direction": pe.direction,
+        "entry_price": round(pe.entry_price, 2),
+        "entry_kind": pe.entry_kind,
+        "sl": round(pe.sl, 2),
+        "tp1": round(pe.tp1, 2),
+        "tp2": round(pe.tp2, 2),
+        "half_1_lots": pe.half_1_lots,
+        "half_2_lots": pe.half_2_lots,
+        "risk_amount": round(pe.risk_amount, 2),
+        "actual_risk": round(pe.actual_risk, 2),
+        "deviation_pct": round(pe.deviation_pct, 2),
+        "created_at_utc": pe.created_at_utc.isoformat(),
+        "timeout_at_utc": pe.timeout_at_utc.isoformat(),
+        "remaining_seconds": round(pe.remaining_seconds(now), 1),
     }
 
 

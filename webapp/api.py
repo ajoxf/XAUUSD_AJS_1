@@ -98,6 +98,23 @@ def stop_bot():
     return jsonify({"status": sup.status, "is_running": sup.is_running})
 
 
+@bp.post("/control/confirm_trade")
+def confirm_trade():
+    """Approve a pending entry. Bot sends the order to the broker now."""
+    sup = _supervisor()
+    ok = sup.confirm_pending()
+    return jsonify({"ok": ok})
+
+
+@bp.post("/control/cancel_trade")
+def cancel_trade():
+    """Reject a pending entry. No order is sent; daily lock NOT fired so the
+    bot can take a later signal next day."""
+    sup = _supervisor()
+    ok = sup.cancel_pending()
+    return jsonify({"ok": ok})
+
+
 # ── Settings ────────────────────────────────────────────
 @bp.get("/settings")
 def get_settings():

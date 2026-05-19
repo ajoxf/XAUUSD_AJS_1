@@ -175,6 +175,51 @@ html, body {
   .ticker-cell-time { margin-left: 0; text-align: left; }
 }
 
+/* ── Pending-entry banner (confirm trade) ────── */
+.pending-banner {
+  background: #fff8e1;
+  border: 2px solid #f59e0b;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.4); }
+  50%      { box-shadow: 0 0 0 12px rgba(245,158,11,0); }
+}
+.pending-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 0.75rem;
+}
+.pending-tag {
+  font-weight: 700; font-size: 1rem; color: #92400e;
+  letter-spacing: 0.02em;
+}
+.pending-countdown {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700; font-size: 1.4rem; color: #b45309;
+}
+.pending-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.6rem; margin-bottom: 0.75rem;
+}
+.pending-cell {
+  background: rgba(255,255,255,0.7); padding: 0.5rem 0.7rem;
+  border-radius: 6px;
+}
+.pending-cell .label {
+  font-size: 0.72rem; color: #78350f; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.pending-cell .value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.05rem; font-weight: 600; color: #1c1917;
+}
+.pending-actions {
+  display: flex; gap: 0.5rem; justify-content: flex-end;
+}
+
 /* ── Metric cards ──────────────────────────────── */
 .metric-card {
   background: var(--card-bg);

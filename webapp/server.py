@@ -14,6 +14,13 @@ import signal
 import sys
 from typing import Optional
 
+# Windows console default codec (cp1252) can't render some unicode chars
+# we use in log messages (→, ✓, ▶). Reconfigure stdout/stderr to UTF-8.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from waitress import serve
 
 from config.settings import Settings

@@ -356,10 +356,52 @@
     ].join("");
   }
 
+  function renderPending(snap) {
+    const banner = $("pending-entry");
+    const pe = snap.pending_entry;
+    if (!pe) {
+      banner.classList.add("d-none");
+      return;
+    }
+    banner.classList.remove("d-none");
+    $("pending-countdown").textContent =
+      `expires in ${pe.remaining_seconds.toFixed(1)}s`;
+    const cell = (l, v) =>
+      `<div class="pending-cell"><div class="label">${l}</div><div class="value">${v}</div></div>`;
+    $("pending-grid").innerHTML = [
+      cell("Direction", pe.direction),
+      cell("Entry", "$" + pe.entry_price.toFixed(2)),
+      cell("Stop loss", "$" + pe.sl.toFixed(2)),
+      cell("TP1", "$" + pe.tp1.toFixed(2)),
+      cell("TP2", "$" + pe.tp2.toFixed(2)),
+      cell("Lots", (pe.half_1_lots + pe.half_2_lots).toFixed(2) +
+            ` (H1 ${pe.half_1_lots.toFixed(2)} / H2 ${pe.half_2_lots.toFixed(2)})`),
+      cell("Intended risk", "$" + pe.risk_amount.toFixed(2)),
+      cell("Actual risk", "$" + pe.actual_risk.toFixed(2) +
+            ` (${pe.deviation_pct.toFixed(1)}% off)`),
+    ].join("");
+  }
+
+  async function postConfirm(action) {
+    const r = await fetch(`/api/control/${action}`, { method: "POST" });
+    if (!r.ok) {
+      alert(`${action} failed: HTTP ${r.status}`);
+      return;
+    }
+    // The next snapshot poll will refresh the banner; trigger one immediately
+    App.fetchOnce();
+  }
+
+  document.getElementById("btn-confirm-trade")
+    ?.addEventListener("click", () => postConfirm("confirm_trade"));
+  document.getElementById("btn-cancel-trade")
+    ?.addEventListener("click", () => postConfirm("cancel_trade"));
+
   App.onSnapshot(snap => {
     renderHeader(snap);
     renderLevels(snap);
     renderPlan(snap);
+    renderPending(snap);
     renderPosition(snap);
     renderWeek(snap);
     renderMonitors(snap);

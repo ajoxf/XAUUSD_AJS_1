@@ -61,6 +61,13 @@ class Settings:
     lot_step: float = 0.01
     contract_size: float = 100.0
 
+    # Manual-confirmation safety net for early live trading.
+    # When True: signal is captured but the bot waits for the user to click
+    # Confirm in the dashboard before sending the order. Auto-expires after
+    # confirmation_timeout_sec.
+    require_confirmation: bool = False
+    confirmation_timeout_sec: int = 30
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
@@ -84,4 +91,7 @@ class Settings:
             circuit_breaker_pct=float(os.getenv("CIRCUIT_BREAKER_PCT", "0.30")),
             atr_short_period=int(os.getenv("ATR_SHORT_PERIOD", "20")),
             atr_long_period=int(os.getenv("ATR_LONG_PERIOD", "50")),
+            require_confirmation=os.getenv("REQUIRE_CONFIRMATION",
+                                             "false").lower() in ("1", "true", "yes"),
+            confirmation_timeout_sec=int(os.getenv("CONFIRMATION_TIMEOUT_SEC", "30")),
         )

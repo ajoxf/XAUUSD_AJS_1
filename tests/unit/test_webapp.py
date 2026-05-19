@@ -311,6 +311,151 @@ def test_backtest_handles_tz_aware_index(tmp_path):
         bt_mod.YFinanceFeed = real
 
 
+def test_require_confirmation_env_configurable(monkeypatch):
+    monkeypatch.setenv("REQUIRE_CONFIRMATION", "true")
+    monkeypatch.setenv("CONFIRMATION_TIMEOUT_SEC", "45")
+    s = Settings.from_env()
+    assert s.require_confirmation is True
+    assert s.confirmation_timeout_sec == 45
+
+
+def test_require_confirmation_default_off(monkeypatch):
+    monkeypatch.delenv("REQUIRE_CONFIRMATION", raising=False)
+    s = Settings.from_env()
+    assert s.require_confirmation is False
+    assert s.confirmation_timeout_sec == 30
+
+
+def test_pending_entry_view_in_snapshot(app):
+    """When engine has a pending entry, snapshot exposes it for the dashboard."""
+    from datetime import datetime, timedelta, timezone
+    from src.engine.state import PendingEntry, EngineState
+    from src.strategy.safety import (CircuitBreaker, ConsecutiveLossCounter,
+                                       DailyTradeLock, WinRateMonitor)
+
+    class _Stub:
+        starting_equity = 100_000.0
+        peak_equity = 100_000.0
+    sup = app.config["SUPERVISOR"]
+
+    # Build a minimal engine.state with a pending entry
+    class _FakeEngine:
+        def __init__(self):
+            now = datetime.now(tz=timezone.utc)
+            self.state = EngineState(
+                starting_equity=100_000.0, peak_equity=100_000.0,
+                win_rate_monitor=WinRateMonitor(base_risk=0.03),
+                circuit_breaker=CircuitBreaker(starting_equity=100_000.0),
+            )
+            self.state.pending_entry = PendingEntry(
+                direction="LONG", entry_price=2456.50, entry_kind="CONTINUATION",
+                sl=2440.00, tp1=2472.00, tp2=2480.80,
+                half_1_lots=1.02, half_2_lots=1.02,
+                risk_amount=3000.0, actual_risk=3060.0, deviation_pct=2.0,
+                sizing_audit={"lots_final": 2.04, "seasonal_mult": 1.0,
+                                "alignment_mult": 1.0, "regime_mult": 1.0},
+                created_at_utc=now,
+                timeout_at_utc=now + timedelta(seconds=30),
+            )
+
+    sup.engine = _FakeEngine()
+    snap = sup.snapshot(recent_events_limit=0)
+    pe = snap.pending_entry
+    assert pe is not None
+    assert pe["direction"] == "LONG"
+    assert pe["entry_price"] == 2456.50
+    assert pe["half_1_lots"] == 1.02
+    assert pe["remaining_seconds"] <= 30.0
+    assert "timeout_at_utc" in pe
+
+
+def test_confirm_and_cancel_trade_endpoints(app):
+    """POST /api/control/confirm_trade and /cancel_trade exist and return ok flag."""
+    client = app.test_client()
+    # No pending entry → both return ok=False
+    assert client.post("/api/control/confirm_trade").get_json()["ok"] is False
+    assert client.post("/api/control/cancel_trade").get_json()["ok"] is False
+
+
+def test_pending_entry_expires_after_timeout(app):
+    """check_pending_expiry transitions pending → expired and clears it."""
+    from datetime import datetime, timedelta, timezone
+    from src.engine.state import PendingEntry, EngineState
+    from src.engine.runner import Engine
+    from src.engine.logger import StructuredLogger
+    from src.broker.paper_adapter import PaperAdapter
+    from src.data.feed import DataFeed
+    import pandas as pd
+
+    class _Feed(DataFeed):
+        def daily(self, sym, end, lookback_days): return pd.DataFrame()
+        def h4(self, sym, end_utc, lookback_bars): return pd.DataFrame()
+        def m15(self, sym, s, e): return pd.DataFrame()
+
+    s = app.config["SETTINGS"]
+    logger = StructuredLogger(s.log_dir, level="WARNING")
+    broker = PaperAdapter(starting_equity=100_000.0)
+    engine = Engine(s, broker, _Feed(), logger)
+
+    past = datetime.now(tz=timezone.utc) - timedelta(seconds=10)
+    engine.state.pending_entry = PendingEntry(
+        direction="LONG", entry_price=2000.0, entry_kind="X",
+        sl=1990.0, tp1=2010.0, tp2=2020.0,
+        half_1_lots=1.0, half_2_lots=1.0,
+        risk_amount=1000.0, actual_risk=1000.0, deviation_pct=0.0,
+        sizing_audit={"lots_final": 2.0, "seasonal_mult": 1.0,
+                        "alignment_mult": 1.0, "regime_mult": 1.0},
+        created_at_utc=past,
+        timeout_at_utc=past + timedelta(seconds=1),   # already past
+    )
+    now = datetime.now(tz=timezone.utc)
+    expired = engine.check_pending_expiry(now)
+    assert expired is True
+    assert engine.state.pending_entry is None
+
+
+def test_dryrun_adapter_intercepts_writes_passes_reads():
+    """DryRunAdapter logs writes but never delegates them; reads pass through."""
+    from src.broker.dryrun_adapter import DryRunAdapter
+    from src.broker.paper_adapter import PaperAdapter
+    from src.broker.adapter import OrderSide
+    underlying = PaperAdapter(starting_equity=50_000.0, spread=0.20)
+    underlying.set_quote(mid=2000.0)
+    dry = DryRunAdapter(underlying, symbol="XAUUSD")
+    dry.connect()
+
+    # Reads pass through
+    assert dry.equity() == 50_000.0
+    assert dry.balance() == 50_000.0
+    q = dry.quote("XAUUSD")
+    assert q.bid > 0 and q.ask > q.bid
+
+    # Open: underlying equity should NOT change (no real order was placed)
+    ticket = dry.open_market(
+        symbol="XAUUSD", side=OrderSide.BUY, volume_lots=1.0,
+        sl=1990.0, tp=2010.0, comment="test",
+        magic=1, max_slippage_per_oz=0.30,
+    )
+    assert ticket.broker_id >= 900_000_000   # fake ID range
+    assert dry.equity() == 50_000.0   # untouched
+
+    # Close: should still leave underlying equity untouched
+    underlying.set_quote(mid=2050.0)   # simulate price move
+    price = dry.close(ticket, 1.0)
+    assert price > 0
+    assert dry.equity() == 50_000.0   # underlying never saw the close
+
+
+def test_dashboard_renders_pending_entry_banner(client):
+    """HTML ships the pending-entry section + Confirm/Cancel buttons."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert b'id="pending-entry"' in r.data
+    assert b"btn-confirm-trade" in r.data
+    assert b"btn-cancel-trade" in r.data
+    assert b"awaiting your approval" in r.data
+
+
 def test_circuit_breaker_uses_configured_threshold(monkeypatch):
     """The CircuitBreaker safety check honours settings.circuit_breaker_pct."""
     from datetime import datetime, timezone

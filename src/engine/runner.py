@@ -8,12 +8,14 @@ from dataclasses import asdict
 from datetime import date, datetime
 from typing import List, Optional, Sequence
 
+from datetime import timedelta
+
 from config.flags import FLAGS
 from config.settings import Settings
 from src.broker.adapter import BrokerAdapter, OrderSide
 from src.data.feed import DataFeed
 from src.engine.logger import StructuredLogger
-from src.engine.state import EngineState
+from src.engine.state import EngineState, PendingEntry
 from src.strategy import entry as entry_mod
 from src.strategy import exits, gates, premarket, session, sizing
 from src.strategy.comex_volume import ComexVolumeTracker
@@ -128,11 +130,13 @@ class Engine:
         return self._open_position(now_utc, direction, eval_result.entry_kind or "CONTINUATION",
                                    confirmation_candle, eval_result)
 
-    # ── Position open ─────────────────────────────────────
+    # ── Position open (split for confirm-trade workflow) ─
     def _open_position(
         self, now_utc: datetime, direction: Direction, entry_kind: str,
         confirmation_candle: Candle, eval_result: "entry_mod.EntryEvaluation",
     ) -> bool:
+        """Build the entry plan. If REQUIRE_CONFIRMATION is set, store as
+        pending and wait for human approval. Otherwise execute immediately."""
         ctx = self.state.premarket
         equity = self.broker.equity()
         active_risk = self.state.win_rate_monitor.evaluate()
@@ -152,12 +156,53 @@ class Engine:
             self.log.warn(f"Rounding deviation {sized.deviation_pct:.1f}% — "
                           f"actual ${sized.actual_risk:.2f} vs intended ${sized.risk_amount:.2f}")
 
-        side = OrderSide.BUY if direction == Direction.LONG else OrderSide.SELL
         sl = ctx.long_sl if direction == Direction.LONG else ctx.short_sl
         tp1 = ctx.long_tp1 if direction == Direction.LONG else ctx.short_tp1
         tp2 = ctx.long_tp2 if direction == Direction.LONG else ctx.short_tp2
 
-        # v3.2 — 50/50 split: open ONE order, partial-close at TP1
+        body_ratio = entry_mod._body_ratio(confirmation_candle)
+
+        if self.settings.require_confirmation:
+            timeout = now_utc + timedelta(seconds=self.settings.confirmation_timeout_sec)
+            pending = PendingEntry(
+                direction=direction.value, entry_price=entry_price,
+                entry_kind=entry_kind, sl=sl, tp1=tp1, tp2=tp2,
+                half_1_lots=sized.half_1, half_2_lots=sized.half_2,
+                risk_amount=sized.risk_amount, actual_risk=sized.actual_risk,
+                deviation_pct=sized.deviation_pct,
+                sizing_audit={
+                    "lots_final": sized.lots_final,
+                    "seasonal_mult": sized.seasonal_mult,
+                    "alignment_mult": sized.alignment_mult,
+                    "regime_mult": sized.regime_mult,
+                },
+                created_at_utc=now_utc, timeout_at_utc=timeout,
+            )
+            self.state.pending_entry = pending
+            self.log.event("entry_pending", {
+                "direction": direction.value,
+                "entry_price": entry_price, "sl": sl, "tp1": tp1, "tp2": tp2,
+                "lots_final": sized.lots_final,
+                "risk_amount": sized.risk_amount, "actual_risk": sized.actual_risk,
+                "expires_in_sec": self.settings.confirmation_timeout_sec,
+            })
+            return True   # signal captured, awaiting human approval
+
+        # No confirmation required — execute immediately
+        return self._execute_entry_plan(
+            now_utc=now_utc, direction=direction, entry_kind=entry_kind,
+            entry_price=entry_price, sl=sl, tp1=tp1, tp2=tp2,
+            sized=sized, body_ratio=body_ratio,
+            equity=equity, active_risk=active_risk, ctx=ctx,
+        )
+
+    def _execute_entry_plan(
+        self, now_utc: datetime, direction: Direction, entry_kind: str,
+        entry_price: float, sl: float, tp1: float, tp2: float, sized,
+        body_ratio: float, equity: float, active_risk: float,
+        ctx: PremarketContext,
+    ) -> bool:
+        side = OrderSide.BUY if direction == Direction.LONG else OrderSide.SELL
         half_specs = [
             ("H1", sized.half_1, tp1),
             ("H2", sized.half_2, tp2),
@@ -177,12 +222,11 @@ class Engine:
             tranche_states.append(TrancheState(name=name, lots=lots))
 
         position = PositionState(
-            direction=direction.value,
+            direction=direction.value if isinstance(direction, Direction) else direction,
             entry_price=entry_price,
             entry_time_utc=now_utc,
             initial_stop=sl,
-            tp1=tp1,
-            tp2=tp2,
+            tp1=tp1, tp2=tp2,
             tranches=tranche_states,
         )
         position.current_stop = sl
@@ -195,13 +239,14 @@ class Engine:
         self.state.daily_lock.mark_fired(self.state.today)
         self.state.week_trades += 1
 
+        dir_str = direction.value if isinstance(direction, Direction) else direction
         self.log.event("trade_open", {
-            "direction": direction.value,
+            "direction": dir_str,
             "entry_kind": entry_kind,
             "entry_price": entry_price,
-            "candle_body_ratio": entry_mod._body_ratio(confirmation_candle),
+            "candle_body_ratio": body_ratio,
             "sl": sl, "tp1": tp1, "tp2": tp2,
-            "tp2_fib": ctx.long_tp2_fib if direction == Direction.LONG else ctx.short_tp2_fib,
+            "tp2_fib": ctx.long_tp2_fib if dir_str == "LONG" else ctx.short_tp2_fib,
             "back_to_back_active": ctx.back_to_back_active,
             "high_atr_extension_active": ctx.high_atr_extension_active,
             **{k: v for k, v in asdict(sized).items()
@@ -212,8 +257,76 @@ class Engine:
         })
         return True
 
+    # ── Manual confirm / cancel ───────────────────────────
+    def confirm_pending(self, now_utc: datetime) -> bool:
+        """Called from /api/control/confirm_trade. Executes the queued plan."""
+        pe = self.state.pending_entry
+        if pe is None or pe.is_terminal():
+            return False
+        ctx = self.state.premarket
+        if ctx is None:
+            return False
+        # Build a fresh SizingResult-like view from the pending entry
+        from src.strategy.sizing import SizingResult
+        sized = SizingResult(
+            direction=pe.direction,
+            entry_price=pe.entry_price, stop_loss=pe.sl,
+            sl_distance=abs(pe.entry_price - pe.sl),
+            risk_amount=pe.risk_amount,
+            lots_raw=pe.sizing_audit["lots_final"],
+            lots_base=pe.sizing_audit["lots_final"],
+            seasonal_mult=pe.sizing_audit["seasonal_mult"],
+            alignment_mult=pe.sizing_audit["alignment_mult"],
+            regime_mult=pe.sizing_audit["regime_mult"],
+            lots_final=pe.sizing_audit["lots_final"],
+            tranche_1=pe.half_1_lots, tranche_2=pe.half_2_lots, tranche_3=0.0,
+            actual_risk=pe.actual_risk, deviation_pct=pe.deviation_pct,
+            warning=pe.deviation_pct > 5.0,
+        )
+        direction = Direction(pe.direction)
+        ok = self._execute_entry_plan(
+            now_utc=now_utc, direction=direction, entry_kind=pe.entry_kind,
+            entry_price=pe.entry_price, sl=pe.sl, tp1=pe.tp1, tp2=pe.tp2,
+            sized=sized, body_ratio=0.0,
+            equity=self.broker.equity(),
+            active_risk=self.state.win_rate_monitor.evaluate(),
+            ctx=ctx,
+        )
+        pe.confirmed = True
+        self.state.pending_entry = None
+        self.log.event("entry_confirmed", {"direction": pe.direction,
+                                            "entry_price": pe.entry_price})
+        return ok
+
+    def cancel_pending(self, now_utc: datetime) -> bool:
+        pe = self.state.pending_entry
+        if pe is None or pe.is_terminal():
+            return False
+        pe.cancelled = True
+        self.state.pending_entry = None
+        self.log.event("entry_cancelled",
+                        {"direction": pe.direction, "by": "user"})
+        # Daily lock NOT fired — user can wait for a later signal next day
+        # (the lock would have fired automatically had we executed)
+        return True
+
+    def check_pending_expiry(self, now_utc: datetime) -> bool:
+        pe = self.state.pending_entry
+        if pe is None or pe.is_terminal():
+            return False
+        if now_utc >= pe.timeout_at_utc:
+            pe.expired = True
+            self.state.pending_entry = None
+            self.log.event("entry_pending_expired",
+                            {"direction": pe.direction})
+            return True
+        return False
+
     # ── Tick handler ──────────────────────────────────────
     def on_tick(self, tick_price: float, now_utc: datetime) -> None:
+        # Pending-entry housekeeping — runs whether or not a position is open
+        self.check_pending_expiry(now_utc)
+
         pos = self.state.position
         if pos is None or pos.closed:
             return
