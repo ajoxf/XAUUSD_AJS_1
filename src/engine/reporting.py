@@ -1,4 +1,4 @@
-"""Weekly performance report — spec §10 v3.2."""
+"""Weekly performance report - spec §10 v3.2."""
 from __future__ import annotations
 
 from datetime import date

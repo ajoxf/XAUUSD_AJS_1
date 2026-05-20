@@ -1,4 +1,4 @@
-"""DST-aware session window — spec §3 Gate 2 + Fix L4."""
+"""DST-aware session window - spec §3 Gate 2 + Fix L4."""
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
@@ -30,12 +30,12 @@ def in_session(now_utc: datetime, d: date) -> bool:
 
 
 def session_end_utc(d: date) -> datetime:
-    """21:00 UTC hard close — final safety net per spec §6."""
+    """21:00 UTC hard close - final safety net per spec §6."""
     return UTC.localize(datetime(d.year, d.month, d.day, 21, 0))
 
 
 def force_close_2055_utc(d: date) -> datetime:
-    """20:55 UTC partial-close trigger — spec v3.1 §6."""
+    """20:55 UTC partial-close trigger - spec v3.1 §6."""
     return UTC.localize(datetime(d.year, d.month, d.day, 20, 55))
 
 

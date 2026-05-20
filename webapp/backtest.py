@@ -1,4 +1,4 @@
-"""Daily-resolution backtest. Approximate — uses daily OHLC heuristic to
+"""Daily-resolution backtest. Approximate - uses daily OHLC heuristic to
 determine which level (TP1 / TP2 / SL) was hit first.
 
 Limitations (surfaced in the UI):
@@ -149,7 +149,7 @@ def run_backtest(start: date, end: date, settings: Settings,
     if isinstance(df.index, pd.DatetimeIndex):
         df.index = df.index.date
 
-    # 4H series — fetch once over the full window
+    # 4H series - fetch once over the full window
     h4 = feed.h4(settings.symbol,
                  pd.Timestamp(end) + pd.Timedelta(days=1),
                  lookback_bars=(end - start).days * 6 + 60 * 6)
@@ -166,7 +166,7 @@ def run_backtest(start: date, end: date, settings: Settings,
             progress_cb(idx / max(total, 1), trade_date)
 
         # Build pre-market context using only data through previous day.
-        # Need 201 bars for SMA200 + atr_long_period+1 — fetch with headroom.
+        # Need 201 bars for SMA200 + atr_long_period+1 - fetch with headroom.
         history_needed = max(201, settings.atr_long_period + 1)
         prior = df[df.index < trade_date].tail(history_needed + 20)
         if len(prior) < history_needed:
@@ -269,8 +269,8 @@ def _resolve_pnl(direction: str, outcome: str, exit_price: float,
     SL: all tranches close at SL.
     TP1: T1 at TP1, T2+T3 close at SESSION_END proxy (use exit_price=close).
         For backtest we conservatively close them at TP1 as well (no trail
-        modelled here — that's a TODO surfaced in the UI).
-    TP2: T1 at TP1, T2 at TP2, T3 at TP2 (conservative — no trail extension).
+        modelled here - that's a TODO surfaced in the UI).
+    TP2: T1 at TP1, T2 at TP2, T3 at TP2 (conservative - no trail extension).
     SESSION_END: all tranches at exit_price.
     """
     sign = 1 if direction == "LONG" else -1

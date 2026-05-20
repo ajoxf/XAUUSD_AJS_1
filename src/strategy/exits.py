@@ -1,4 +1,4 @@
-"""Trade management — spec §6 + §7 v3.2.
+"""Trade management - spec §6 + §7 v3.2.
 
 50/50 exit structure:
 - Half 1 closes at TP1 → breakeven-plus stop on Half 2 → trail activates
@@ -37,7 +37,7 @@ class CloseReason(str, Enum):
 
 @dataclass
 class TrancheState:
-    """Half of the position in v3.2 — name is 'H1' or 'H2'.
+    """Half of the position in v3.2 - name is 'H1' or 'H2'.
     The legacy 'T1/T2/T3' naming is preserved for back-compat fields."""
     name: str
     lots: float

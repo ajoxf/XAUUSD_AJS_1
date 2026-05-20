@@ -142,7 +142,7 @@ def manual_close():
 
 @bp.post("/orders/close_all")
 def manual_close_all():
-    """Flatten everything carrying our magic number — strategy + manual."""
+    """Flatten everything carrying our magic number - strategy + manual."""
     sup = _supervisor()
     return jsonify(sup.manual_close_all())
 

@@ -4,7 +4,7 @@ Pulls daily / 4-hour / 15-minute OHLC straight from the connected MT5
 terminal, so every strategy level (Fibonacci entries, ATR, SMA200, EMA)
 is computed from the SAME instrument the bot trades. This is critical:
 yfinance's gold ticker (GC=F) is COMEX *futures*, which differ from the
-broker's *spot* XAUUSD by the basis — using it would mis-place every level.
+broker's *spot* XAUUSD by the basis - using it would mis-place every level.
 
 Requires MT5 to be initialised (the broker adapter does this on connect).
 """
@@ -23,7 +23,7 @@ except ImportError:
 class MT5DataFeed:
     def __init__(self, symbol: str):
         if mt5 is None:
-            raise ImportError("MetaTrader5 package not available — MT5DataFeed "
+            raise ImportError("MetaTrader5 package not available - MT5DataFeed "
                               "only works on a host with the MT5 terminal.")
         self.symbol = symbol
 

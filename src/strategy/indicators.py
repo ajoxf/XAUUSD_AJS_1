@@ -61,7 +61,7 @@ def median_range(df: pd.DataFrame, lookback: int) -> float:
 
 
 def sma(values: Sequence[float], period: int) -> float:
-    """Simple moving average — final value."""
+    """Simple moving average - final value."""
     if len(values) < period:
         raise ValueError(f"Need at least {period} values for SMA({period}), got {len(values)}")
     s = pd.Series(values, dtype=float).tail(period)

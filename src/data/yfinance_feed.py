@@ -27,7 +27,7 @@ def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
 class YFinanceFeed:
     def __init__(self, ticker: str = _DEFAULT_TICKER):
         if yf is None:
-            raise ImportError("yfinance not installed — `pip install yfinance`")
+            raise ImportError("yfinance not installed - `pip install yfinance`")
         self.ticker = ticker
 
     def daily(self, symbol: str, end: date, lookback_days: int) -> pd.DataFrame:

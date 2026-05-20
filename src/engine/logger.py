@@ -1,4 +1,4 @@
-"""Structured JSONL logger — spec §9.
+"""Structured JSONL logger - spec §9.
 
 Writes structured events to logs/events.jsonl and a human-readable
 summary to logs/bot.log AND to the console (via the root logger which
@@ -23,7 +23,7 @@ class StructuredLogger:
         self.log = logging.getLogger("xauusd-bot")
         self.log.setLevel(getattr(logging, level, logging.INFO))
 
-        # File handler — append, attach only once
+        # File handler - append, attach only once
         already_attached = any(
             isinstance(h, logging.FileHandler)
             and getattr(h, "baseFilename", "") == str(self.text_log.resolve())
@@ -70,7 +70,7 @@ def _fmt_money(v: Any) -> str:
     try:
         return f"${float(v):.2f}"
     except (TypeError, ValueError):
-        return "—"
+        return "-"
 
 
 def _summarize_event(kind: str, p: Dict[str, Any]) -> str:
@@ -104,5 +104,5 @@ def _summarize_event(kind: str, p: Dict[str, Any]) -> str:
     if kind == "rsi_post_tp1_trim":
         return (f"RSI trim: {p.get('trim_lots')} lots at RSI {p.get('rsi_at_trim')} "
                 f"(H2 remaining {p.get('remaining_h2_lots')})")
-    # Generic fallback — short truncated kv dump
+    # Generic fallback - short truncated kv dump
     return ", ".join(f"{k}={v}" for k, v in p.items() if k != "ts")[:200]

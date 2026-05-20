@@ -1,11 +1,11 @@
-"""COMEX GC1! 15-min volume tracker — Opt 1 v3.2.
+"""COMEX GC1! 15-min volume tracker - Opt 1 v3.2.
 
 Receives 15-min volume updates (via webhook or direct feed) and tracks a
-rolling 20-bar baseline. Detects "consecutive weak bars" (≥2 bars under 50%
+rolling 20-bar baseline. Detects "consecutive weak bars" (>=2 bars under 50%
 of average) which signals momentum fade and triggers half-2 exit.
 
 The webhook receiver lives in `src.integrations.webhook_server` and is
-optional — if no feed is configured, callers should detect staleness via
+optional - if no feed is configured, callers should detect staleness via
 `is_stale()` and fall back to standard trail behaviour.
 """
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Production launcher — Waitress WSGI + COMEX webhook server.
+"""Production launcher - Waitress WSGI + COMEX webhook server.
 
 Usage:
     python -m webapp.server
@@ -15,7 +15,7 @@ import sys
 from typing import Optional
 
 # Windows console default codec (cp1252) can't render some unicode chars
-# we use in log messages (→, ✓, ▶). Reconfigure stdout/stderr to UTF-8.
+# we use in log messages (->, OK, >). Reconfigure stdout/stderr to UTF-8.
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -80,11 +80,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         mode_label = ("attach to running MT5 terminal"
                       if not settings.mt5_login
                       else f"login as account {settings.mt5_login}")
-        log.info("Broker:      MT5 — %s", mode_label)
+        log.info("Broker:      MT5 - %s", mode_label)
     else:
         log.info("Broker:      paper (yfinance replay)")
     log.info("Web UI:      http://%s:%d", settings.webapp_host, settings.webapp_port)
-    log.info("Press ▶ Start in the sidebar to begin trading.")
+    log.info("Press > Start in the sidebar to begin trading.")
     log.info("=" * 70)
     serve(app, host=settings.webapp_host, port=settings.webapp_port,
           threads=8, ident="xauusd-bot/3.2")

@@ -93,7 +93,7 @@ class EngineSupervisor:
         self.last_heartbeat: Optional[datetime] = None
 
         # Eager broker connect for account-info display before the engine
-        # starts. Live mode → attach to MT5 if running. Paper → instantiate
+        # starts. Live mode -> attach to MT5 if running. Paper -> instantiate
         # the simulated broker with starting_equity from .env.
         self._try_eager_connect()
 
@@ -106,11 +106,11 @@ class EngineSupervisor:
             try:
                 from src.data.mt5_feed import MT5DataFeed
                 feed = MT5DataFeed(self.settings.symbol)
-                log.info("Data feed: MT5 (%s) — levels computed from broker prices",
+                log.info("Data feed: MT5 (%s) - levels computed from broker prices",
                           self.settings.symbol)
                 return feed
             except Exception as exc:
-                log.warning("MT5 data feed unavailable (%s) — falling back to "
+                log.warning("MT5 data feed unavailable (%s) - falling back to "
                              "yfinance GC=F. WARNING: futures prices differ from "
                              "your broker's spot; levels may be mis-aligned.", exc)
         return YFinanceFeed()
@@ -126,7 +126,7 @@ class EngineSupervisor:
           reference broker's balance/equity so the user can see their real
           account size while the bot trades in sim.
 
-        Failures are non-fatal — the user can retry by pressing Start
+        Failures are non-fatal - the user can retry by pressing Start
         (which re-runs the connect path for the trading broker)."""
         try:
             from src.broker.mt5_adapter import MT5Adapter
@@ -136,11 +136,11 @@ class EngineSupervisor:
             eq = adapter.equity()
             if self.settings.mode == "live":
                 self.broker = adapter
-                log.info("Pre-connect to MT5 ✓ balance=$%.2f equity=$%.2f "
-                          "(trading broker — press Start to begin)", bal, eq)
+                log.info("Pre-connect to MT5 OK balance=$%.2f equity=$%.2f "
+                          "(trading broker - press Start to begin)", bal, eq)
             else:
                 self.reference_broker = adapter
-                log.info("MT5 reference attached ✓ balance=$%.2f equity=$%.2f "
+                log.info("MT5 reference attached OK balance=$%.2f equity=$%.2f "
                           "(paper-trading; balance shown is your real MT5 account)",
                           bal, eq)
         except Exception as exc:
@@ -184,7 +184,7 @@ class EngineSupervisor:
         self.status = "stopped"
 
     def update_settings(self, settings: Settings) -> None:
-        """Apply new settings — caller should ensure the engine is stopped."""
+        """Apply new settings - caller should ensure the engine is stopped."""
         with self._lock:
             self.settings = settings
 
@@ -220,7 +220,7 @@ class EngineSupervisor:
             if self.settings.mode == "live":
                 from src.broker.mt5_adapter import MT5Adapter
                 login_mode = "attach" if not self.settings.mt5_login else "credential"
-                log.info("Connecting to MT5 in %s mode…", login_mode)
+                log.info("Connecting to MT5 in %s mode...", login_mode)
                 self.broker = MT5Adapter(self.settings)
             elif self.settings.mode == "dryrun":
                 from src.broker.dryrun_adapter import DryRunAdapter
@@ -229,7 +229,7 @@ class EngineSupervisor:
                 self.broker = DryRunAdapter(MT5Adapter(self.settings),
                                               symbol=self.settings.symbol)
             else:
-                log.info("Paper broker initialised — replaying recent history")
+                log.info("Paper broker initialised - replaying recent history")
                 self.broker = PaperAdapter(starting_equity=self.settings.starting_equity)
             try:
                 self.broker.connect()
@@ -245,7 +245,7 @@ class EngineSupervisor:
             self.engine = Engine(self.settings, self.broker,
                                   feed, self.logger,
                                   comex_tracker=self.comex_tracker)
-        log.info("Engine ready · equity=$%.2f · CB threshold=%.0f%%",
+        log.info("Engine ready | equity=$%.2f | CB threshold=%.0f%%",
                   self.broker.equity(),
                   self.settings.circuit_breaker_pct * 100)
 
@@ -256,7 +256,7 @@ class EngineSupervisor:
 
     def _run_live_loop(self) -> None:
         self.status = "running"
-        log.info("Live loop started · polling MT5 every 3s · heartbeat every 60s")
+        log.info("Live loop started | polling MT5 every 3s | heartbeat every 60s")
         current_day: Optional[date] = None
         last_heartbeat_console = 0.0
         reconciled = False
@@ -271,7 +271,7 @@ class EngineSupervisor:
                     if not reconciled:
                         if self.engine.reconcile_open_positions(now):
                             log.warning("Adopted a pre-existing position on "
-                                         "startup — no new entry will fire today")
+                                         "startup - no new entry will fire today")
                         reconciled = True
             try:
                 if self.engine.state.position and not self.engine.state.position.closed:
@@ -281,7 +281,7 @@ class EngineSupervisor:
             except Exception as exc:
                 self.logger.warn(f"Live tick failure: {exc}")
 
-            # 60s console heartbeat — current price + open position summary
+            # 60s console heartbeat - current price + open position summary
             wall = time.time()
             if wall - last_heartbeat_console > 60.0:
                 last_heartbeat_console = wall
@@ -299,12 +299,12 @@ class EngineSupervisor:
             pos = self.engine.state.position if self.engine else None
             if pos and not pos.closed:
                 tags = []
-                if pos.tp1_hit: tags.append("TP1✓")
-                if pos.tp2_hit: tags.append("TP2✓")
+                if pos.tp1_hit: tags.append("TP1OK")
+                if pos.tp2_hit: tags.append("TP2OK")
                 if pos.accelerated_tp1: tags.append(f"accel-{pos.accelerated_kind}")
                 tag = " ".join(tags) or "open"
                 log.info(
-                    "[heartbeat] bid=%.2f ask=%.2f spread=%.2f · equity=$%.2f · "
+                    "[heartbeat] bid=%.2f ask=%.2f spread=%.2f | equity=$%.2f | "
                     "POS %s @ %.2f stop=%.2f tp1=%.2f tp2=%.2f %s",
                     q.bid, q.ask, q.spread, equity,
                     pos.direction, pos.entry_price, pos.current_stop,
@@ -312,7 +312,7 @@ class EngineSupervisor:
                 )
             else:
                 log.info(
-                    "[heartbeat] bid=%.2f ask=%.2f spread=%.2f · equity=$%.2f · flat",
+                    "[heartbeat] bid=%.2f ask=%.2f spread=%.2f | equity=$%.2f | flat",
                     q.bid, q.ask, q.spread, equity,
                 )
         except Exception as exc:
@@ -320,12 +320,12 @@ class EngineSupervisor:
 
     def _run_paper_replay(self) -> None:
         self.status = "running"
-        log.info("Paper replay starting · fetching last 30 trading days from yfinance…")
+        log.info("Paper replay starting | fetching last 30 trading days from yfinance...")
         try:
             feed = YFinanceFeed()
             end = datetime.now(tz=timezone.utc).date()
             replay = feed.daily(self.settings.symbol, end, lookback_days=30)
-            log.info("Replay loaded %d trading days (%s → %s)",
+            log.info("Replay loaded %d trading days (%s -> %s)",
                       len(replay), replay.index[0], replay.index[-1])
         except Exception as exc:
             self.last_error = f"yfinance unavailable for replay: {exc}"
@@ -508,7 +508,7 @@ class EngineSupervisor:
         from src.broker.adapter import OrderSide
         with self._lock:
             if self.broker is None:
-                return {"ok": False, "error": "broker not connected — press Start "
+                return {"ok": False, "error": "broker not connected - press Start "
                         "or, in paper mode, manual trading is unavailable"}
             if self.settings.mode == "paper":
                 return {"ok": False, "error": "manual orders are disabled in paper "
@@ -548,7 +548,7 @@ class EngineSupervisor:
             return {"ok": ok}
 
     def manual_close_all(self) -> Dict[str, Any]:
-        """Flatten everything carrying our magic — strategy + manual orders."""
+        """Flatten everything carrying our magic - strategy + manual orders."""
         with self._lock:
             if self.broker is None:
                 return {"ok": False, "error": "broker not connected"}
@@ -572,7 +572,7 @@ class EngineSupervisor:
             except Exception as exc:
                 return {"ok": False, "error": str(exc)}
             self.manual_tickets = []
-            log.warning("FLATTEN ALL — closed %d position(s)", closed)
+            log.warning("FLATTEN ALL - closed %d position(s)", closed)
             return {"ok": True, "closed": closed}
 
     def _resolve_balance(self) -> tuple:
@@ -582,7 +582,7 @@ class EngineSupervisor:
         if self.broker is not None and self.settings.mode == "live":
             try:
                 return (self.broker.equity(), self.broker.balance(),
-                        "live · MT5 account")
+                        "live | MT5 account")
             except Exception:
                 pass
         # 2. Reference MT5 broker (paper mode with MT5 reachable)
@@ -590,19 +590,19 @@ class EngineSupervisor:
             try:
                 return (self.reference_broker.equity(),
                         self.reference_broker.balance(),
-                        "MT5 reference · paper trading")
+                        "MT5 reference | paper trading")
             except Exception:
                 pass
         # 3. Trading broker for paper mode (engine running)
         if self.broker is not None:
             try:
                 return (self.broker.equity(), self.broker.balance(),
-                        "paper · simulated")
+                        "paper | simulated")
             except Exception:
                 pass
         # 4. Fallback to env starting equity
         return (self.settings.starting_equity, self.settings.starting_equity,
-                "paper · simulated")
+                "paper | simulated")
 
     def _read_recent_events(self, n: int) -> List[Dict[str, Any]]:
         import json

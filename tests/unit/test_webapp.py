@@ -169,7 +169,7 @@ def test_premarket_rejects_invalid_atr_periods():
         premarket.build_premarket(date(2024, 6, 25), df, h4["close"],
                                     atr_short_period=50, atr_long_period=20)
     # period < 2 invalid
-    with pytest.raises(ValueError, match="ATR periods must be ≥ 2"):
+    with pytest.raises(ValueError, match="ATR periods must be >= 2"):
         premarket.build_premarket(date(2024, 6, 25), df, h4["close"],
                                     atr_short_period=1, atr_long_period=10)
 
@@ -214,7 +214,7 @@ def test_paper_mode_reference_broker_when_mt5_present(app):
     snap = sup.snapshot(recent_events_limit=0)
     assert snap.balance == 42_500.0
     assert snap.equity == 42_500.0
-    assert snap.balance_source == "MT5 reference · paper trading"
+    assert snap.balance_source == "MT5 reference | paper trading"
 
 
 def test_paper_mode_falls_back_to_starting_equity_when_no_mt5(app):
@@ -224,7 +224,7 @@ def test_paper_mode_falls_back_to_starting_equity_when_no_mt5(app):
     sup.reference_broker = None
     snap = sup.snapshot(recent_events_limit=0)
     assert snap.balance == 100_000.0
-    assert snap.balance_source == "paper · simulated"
+    assert snap.balance_source == "paper | simulated"
 
 
 def test_live_mode_broker_takes_priority_over_reference(app):
@@ -239,7 +239,7 @@ def test_live_mode_broker_takes_priority_over_reference(app):
     sup.reference_broker = PaperAdapter(starting_equity=99_999.0)
     snap = sup.snapshot(recent_events_limit=0)
     assert snap.balance == 12_345.0
-    assert snap.balance_source == "live · MT5 account"
+    assert snap.balance_source == "live | MT5 account"
 
 
 def test_live_mode_attempts_eager_connect(tmp_path, caplog):

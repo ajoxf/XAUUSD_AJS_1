@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -41,7 +42,7 @@ class MT5Adapter(BrokerAdapter):
         login = self.settings.mt5_login
 
         if not login:
-            # Attach mode — defer all auth to the running terminal
+            # Attach mode - defer all auth to the running terminal
             init_args = {}
             if path:
                 init_args["path"] = path
@@ -49,7 +50,7 @@ class MT5Adapter(BrokerAdapter):
             if not ok:
                 err = mt5.last_error()
                 raise RuntimeError(
-                    "MT5 attach mode failed — is the MT5 terminal running and "
+                    "MT5 attach mode failed - is the MT5 terminal running and "
                     f"logged in? Error: {err}. Set MT5_LOGIN/MT5_PASSWORD/"
                     "MT5_SERVER in .env to log in via the bot instead."
                 )
@@ -61,7 +62,7 @@ class MT5Adapter(BrokerAdapter):
                     "log in to your broker, then restart the bot."
                 )
         else:
-            # Credential mode — bot performs the login
+            # Credential mode - bot performs the login
             init_args = {"login": login,
                          "password": self.settings.mt5_password,
                          "server": self.settings.mt5_server}
@@ -95,7 +96,7 @@ class MT5Adapter(BrokerAdapter):
             }
             mode_str = mode_map.get(account.trade_mode, str(account.trade_mode))
             log.info(
-                "MT5 AUTHENTICATED ✓ account=%d (%s) server=%s broker=%s "
+                "MT5 AUTHENTICATED OK account=%d (%s) server=%s broker=%s "
                 "balance=%.2f %s leverage=1:%d symbol=%s",
                 account.login, mode_str, account.server,
                 getattr(account, "company", "?"),
@@ -132,51 +133,114 @@ class MT5Adapter(BrokerAdapter):
         )
 
     # ── orders ───────────────────────────────────────────
+    def _filling_modes(self, info) -> list:
+        """Preferred filling modes to try, in order. Brokers vary in which
+        they accept; we fall back across them on TRADE_RETCODE_INVALID_FILL."""
+        modes = []
+        # If the symbol advertises a supported filling mode, honour it first.
+        fm = getattr(info, "filling_mode", 0)
+        if fm and hasattr(mt5, "SYMBOL_FILLING_FOK") and (fm & mt5.SYMBOL_FILLING_FOK):
+            modes.append(mt5.ORDER_FILLING_FOK)
+        if fm and hasattr(mt5, "SYMBOL_FILLING_IOC") and (fm & mt5.SYMBOL_FILLING_IOC):
+            modes.append(mt5.ORDER_FILLING_IOC)
+        # Always include the common fallbacks (de-duplicated)
+        for m in (mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_FOK,
+                  mt5.ORDER_FILLING_RETURN):
+            if m not in modes:
+                modes.append(m)
+        return modes
+
     def open_market(
         self, symbol: str, side: OrderSide, volume_lots: float,
         sl: float, tp: Optional[float], comment: str, magic: int,
         max_slippage_per_oz: float,
     ) -> OrderTicket:
         order_type = mt5.ORDER_TYPE_BUY if side == OrderSide.BUY else mt5.ORDER_TYPE_SELL
-        tick = mt5.symbol_info_tick(symbol)
-        price = tick.ask if side == OrderSide.BUY else tick.bid
         info = mt5.symbol_info(symbol)
-        # MT5 deviation is in points. For XAUUSD typically 1 point = 0.01 USD.
-        # If trade_tick_size differs, scale appropriately.
         tick_size = info.trade_tick_size if info.trade_tick_size > 0 else 0.01
         deviation = max(1, int(max_slippage_per_oz / tick_size))
+        filling_modes = self._filling_modes(info)
 
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": symbol,
-            "volume": float(volume_lots),
-            "type": order_type,
-            "price": float(price),
-            "sl": float(sl),
-            "deviation": deviation,
-            "magic": int(magic),
-            "comment": comment[:31],
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+        max_attempts = max(1, self.settings.order_max_attempts)
+        backoff = max(0.0, self.settings.order_retry_backoff_sec)
+        # Retcodes worth retrying with a fresh price.
+        transient = {
+            getattr(mt5, "TRADE_RETCODE_REQUOTE", -1),
+            getattr(mt5, "TRADE_RETCODE_PRICE_CHANGED", -2),
+            getattr(mt5, "TRADE_RETCODE_PRICE_OFF", -3),
+            getattr(mt5, "TRADE_RETCODE_TIMEOUT", -4),
         }
-        if tp is not None:
-            request["tp"] = float(tp)
+        # Terminal retcodes - don't retry, surface immediately.
+        terminal = {
+            getattr(mt5, "TRADE_RETCODE_NO_MONEY", -10),
+            getattr(mt5, "TRADE_RETCODE_MARKET_CLOSED", -11),
+            getattr(mt5, "TRADE_RETCODE_TRADE_DISABLED", -12),
+        }
 
-        result = mt5.order_send(request)
-        if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            err = mt5.last_error() if result is None else (result.retcode, result.comment)
-            raise RuntimeError(f"MT5 order_send failed: {err}")
+        last_err = None
+        for attempt in range(1, max_attempts + 1):
+            tick = mt5.symbol_info_tick(symbol)
+            if tick is None:
+                last_err = mt5.last_error()
+                time.sleep(backoff * attempt)
+                continue
+            price = tick.ask if side == OrderSide.BUY else tick.bid
 
-        return OrderTicket(
-            broker_id=int(result.order),
-            side=side,
-            volume_lots=float(result.volume),
-            open_price=float(result.price),
-            sl=float(sl),
-            tp=tp,
-            comment=comment,
-            opened_at_utc=datetime.now(tz=timezone.utc),
-        )
+            for filling in filling_modes:
+                request = {
+                    "action": mt5.TRADE_ACTION_DEAL,
+                    "symbol": symbol,
+                    "volume": float(volume_lots),
+                    "type": order_type,
+                    "price": float(price),
+                    "sl": float(sl),
+                    "deviation": deviation,
+                    "magic": int(magic),
+                    "comment": comment[:31],
+                    "type_time": mt5.ORDER_TIME_GTC,
+                    "type_filling": filling,
+                }
+                if tp is not None:
+                    request["tp"] = float(tp)
+
+                result = mt5.order_send(request)
+                if result is None:
+                    last_err = mt5.last_error()
+                    continue
+                rc = result.retcode
+
+                if rc == mt5.TRADE_RETCODE_DONE:
+                    filled = float(result.volume)
+                    if filled + 1e-9 < float(volume_lots):
+                        log.warning("Partial fill: requested %.2f, filled %.2f "
+                                     "(%s %s)", volume_lots, filled, side.value, symbol)
+                    return OrderTicket(
+                        broker_id=int(result.order), side=side,
+                        volume_lots=filled, open_price=float(result.price),
+                        sl=float(sl), tp=tp, comment=comment,
+                        opened_at_utc=datetime.now(tz=timezone.utc),
+                    )
+
+                if rc == getattr(mt5, "TRADE_RETCODE_INVALID_FILL", -99):
+                    last_err = (rc, result.comment)
+                    continue   # try next filling mode
+
+                if rc in terminal:
+                    raise RuntimeError(
+                        f"MT5 order rejected (terminal): retcode={rc} "
+                        f"comment={result.comment}")
+
+                if rc in transient:
+                    last_err = (rc, result.comment)
+                    break      # break filling loop -> retry with fresh price
+
+                # Unknown non-success - record and try next filling mode
+                last_err = (rc, result.comment)
+
+            if attempt < max_attempts:
+                time.sleep(backoff * attempt)
+
+        raise RuntimeError(f"MT5 order_send failed after {max_attempts} attempts: {last_err}")
 
     def modify_sl(self, ticket: OrderTicket, new_sl: float) -> bool:
         positions = mt5.positions_get(ticket=ticket.broker_id)

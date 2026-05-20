@@ -1,4 +1,4 @@
-"""Main engine — orchestrates pre-market, gates, entry detection, and exits.
+"""Main engine - orchestrates pre-market, gates, entry detection, and exits.
 
 v3.2: 50/50 exit, 20:55 UTC partial close, six return-enhancement opts.
 """
@@ -117,7 +117,7 @@ class Engine:
                 price = pos.entry_price
             self.log.warn(
                 f"Adopted position opened {opened_date} (not {self.state.today}) "
-                "— overnight anomaly, force-closing per no-overnight rule")
+                "- overnight anomaly, force-closing per no-overnight rule")
             closed = exits.force_close_session_end(pos, price, now_utc)
             for t in closed:
                 self._record_close(t)
@@ -188,7 +188,7 @@ class Engine:
 
     # ── External-close detection ──────────────────────────
     def reconcile_external_closes(self, now_utc: datetime, price: float) -> bool:
-        """Detect tranches closed outside the bot — manual close in the MT5
+        """Detect tranches closed outside the bot - manual close in the MT5
         terminal, broker-side SL/TP, or margin call. Marks any vanished
         tranche EXTERNAL_CLOSE. Returns True if anything was detected.
 
@@ -206,6 +206,7 @@ class Engine:
             return False
         live_ids = {t.broker_id for t in broker_tickets}
 
+        live_by_id = {t.broker_id: t for t in broker_tickets}
         detected = False
         for tranche in pos.open_tranches:
             ticket = next((x for x in self.state.tickets
@@ -213,6 +214,7 @@ class Engine:
             if ticket is None:
                 continue
             if ticket.broker_id not in live_ids:
+                # Full external close - ticket gone
                 tranche.is_open = False
                 tranche.close_price = price
                 tranche.close_reason = CloseReason.EXTERNAL_CLOSE
@@ -224,6 +226,21 @@ class Engine:
                     "price": price,
                     "note": "closed outside the bot (MT5 terminal / broker)",
                 })
+            else:
+                # Partial external close - ticket still open but smaller
+                live_vol = live_by_id[ticket.broker_id].volume_lots
+                if live_vol + 1e-9 < tranche.lots:
+                    old = tranche.lots
+                    tranche.lots = live_vol
+                    ticket.volume_lots = live_vol
+                    detected = True
+                    self.log.event("external_partial_close", {
+                        "tranche": tranche.name,
+                        "ticket": ticket.broker_id,
+                        "lots_from": round(old, 4),
+                        "lots_to": round(live_vol, 4),
+                        "note": "partially reduced outside the bot",
+                    })
 
         if detected and pos.is_fully_closed:
             pos.closed = True
@@ -317,13 +334,13 @@ class Engine:
         quote = self.broker.quote(self.settings.symbol)
         entry_price = quote.ask if direction == Direction.LONG else quote.bid
         if quote.spread > self.settings.max_spread_per_oz:
-            self.log.warn(f"Spread {quote.spread:.2f} > max — abort entry")
+            self.log.warn(f"Spread {quote.spread:.2f} > max - abort entry")
             return False
 
         sized = sizing.compute_size(ctx, self.settings, direction.value,
                                     entry_price, equity, risk_pct_override=active_risk)
         if sized.warning:
-            self.log.warn(f"Rounding deviation {sized.deviation_pct:.1f}% — "
+            self.log.warn(f"Rounding deviation {sized.deviation_pct:.1f}% - "
                           f"actual ${sized.actual_risk:.2f} vs intended ${sized.risk_amount:.2f}")
 
         sl = ctx.long_sl if direction == Direction.LONG else ctx.short_sl
@@ -358,7 +375,7 @@ class Engine:
             })
             return True   # signal captured, awaiting human approval
 
-        # No confirmation required — execute immediately
+        # No confirmation required - execute immediately
         return self._execute_entry_plan(
             now_utc=now_utc, direction=direction, entry_kind=entry_kind,
             entry_price=entry_price, sl=sl, tp1=tp1, tp2=tp2,
@@ -382,14 +399,31 @@ class Engine:
         for name, lots, tp in half_specs:
             if lots < self.settings.lot_step:
                 continue
-            ticket = self.broker.open_market(
-                symbol=self.settings.symbol, side=side, volume_lots=lots,
-                sl=sl, tp=tp, comment=f"v3.2 {name}",
-                magic=self.settings.magic_number,
-                max_slippage_per_oz=self.settings.max_slippage_per_oz,
-            )
+            try:
+                ticket = self.broker.open_market(
+                    symbol=self.settings.symbol, side=side, volume_lots=lots,
+                    sl=sl, tp=tp, comment=f"v3.2 {name}",
+                    magic=self.settings.magic_number,
+                    max_slippage_per_oz=self.settings.max_slippage_per_oz,
+                )
+            except Exception as exc:
+                # One tranche rejected - log and keep any that already filled.
+                self.log.warn(f"Order for {name} rejected: {exc}")
+                continue
+            # Use the broker's ACTUAL filled volume (handles partial fills).
+            filled = ticket.volume_lots
+            if filled < self.settings.lot_step:
+                self.log.warn(f"Order for {name} returned zero fill - skipping")
+                continue
+            if filled + 1e-9 < lots:
+                self.log.warn(f"{name} partial fill: requested {lots}, "
+                              f"got {filled}")
             tickets.append(ticket)
-            tranche_states.append(TrancheState(name=name, lots=lots))
+            tranche_states.append(TrancheState(name=name, lots=filled))
+
+        if not tranche_states:
+            self.log.warn("All entry orders rejected/zero-filled - no position opened")
+            return False
 
         position = PositionState(
             direction=direction.value if isinstance(direction, Direction) else direction,
@@ -476,7 +510,7 @@ class Engine:
         self.state.pending_entry = None
         self.log.event("entry_cancelled",
                         {"direction": pe.direction, "by": "user"})
-        # Daily lock NOT fired — user can wait for a later signal next day
+        # Daily lock NOT fired - user can wait for a later signal next day
         # (the lock would have fired automatically had we executed)
         return True
 
@@ -494,7 +528,7 @@ class Engine:
 
     # ── Tick handler ──────────────────────────────────────
     def on_tick(self, tick_price: float, now_utc: datetime) -> None:
-        # Pending-entry housekeeping — runs whether or not a position is open
+        # Pending-entry housekeeping - runs whether or not a position is open
         self.check_pending_expiry(now_utc)
 
         pos = self.state.position
@@ -549,7 +583,7 @@ class Engine:
             self._post_trade_bookkeeping(pos)
             return
 
-        # COMEX volume fade exit (Opt 1) — only after TP1
+        # COMEX volume fade exit (Opt 1) - only after TP1
         if pos.tp1_hit and not pos.tp2_hit:
             h2 = exits.maybe_comex_volume_exit(pos, self.state.comex_tracker, now_utc)
             if h2 is not None and h2.is_open:

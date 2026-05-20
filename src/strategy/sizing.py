@@ -1,4 +1,4 @@
-"""Position sizing — spec §5 v3.2. 3% base risk + seasonal + alignment + regime.
+"""Position sizing - spec §5 v3.2. 3% base risk + seasonal + alignment + regime.
 
 v3.2 uses a 50/50 split (Half 1 → TP1, Half 2 → TP2). The result still
 exposes `tranche_1/2/3` for back-compat with the engine: H1=tranche_1,
@@ -32,7 +32,7 @@ class SizingResult:
     # 50/50 split: H1 = tranche_1, H2 = tranche_2
     tranche_1: float
     tranche_2: float
-    tranche_3: float       # always 0.0 in v3.2 — kept for back-compat
+    tranche_3: float       # always 0.0 in v3.2 - kept for back-compat
 
     actual_risk: float
     deviation_pct: float
@@ -102,7 +102,7 @@ def compute_size(
             h1 = max(round(lots_final - h2, 4), settings.lot_step)
         t1, t2, t3 = h1, h2, 0.0
     else:
-        # Legacy 3-tranche 40/30/30 split — kept for A/B testing
+        # Legacy 3-tranche 40/30/30 split - kept for A/B testing
         t1 = max(_floor_to_step(lots_final * 0.40, settings.lot_step), settings.lot_step)
         t2 = max(_floor_to_step(lots_final * 0.30, settings.lot_step), settings.lot_step)
         t3 = round(lots_final - t1 - t2, 4)

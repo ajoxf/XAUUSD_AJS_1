@@ -4,7 +4,7 @@ Listens on POST /comex_volume with JSON body:
     {"type":"volume_update","symbol":"GC1!","timeframe":"15",
      "volume":"<float>","time":"<iso8601>"}
 
-Uses Python stdlib only — no Flask/FastAPI dependency. Runs in a daemon
+Uses Python stdlib only - no Flask/FastAPI dependency. Runs in a daemon
 thread so it can be embedded in the bot process.
 """
 from __future__ import annotations
@@ -56,7 +56,7 @@ def make_handler(tracker: ComexVolumeTracker):
             self._send(404)
 
         def log_message(self, *args, **kwargs) -> None:
-            # Suppress stdlib's default access log — we log via the bot logger
+            # Suppress stdlib's default access log - we log via the bot logger
             pass
 
     return _Handler

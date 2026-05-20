@@ -1,7 +1,7 @@
-"""Four-layer entry confirmation — spec §4.
+"""Four-layer entry confirmation - spec §4.
 
 Layer A: level cross (caller monitors price stream)
-Layer B: 15m candle close + body ≥ 60% of range on correct side
+Layer B: 15m candle close + body >= 60% of range on correct side
 Layer C: RSI(14) on 15m in neutral zone for direction
 Layer D: re-test confirmation (next 15m candle: continuation or valid pullback)
 """
@@ -53,10 +53,10 @@ def layer_b_body_close(
     reasons: List[str] = []
     if direction == Direction.LONG:
         if candle.close <= level:
-            reasons.append(f"B: close {candle.close} ≤ level {level}")
+            reasons.append(f"B: close {candle.close} <= level {level}")
     else:
         if candle.close >= level:
-            reasons.append(f"B: close {candle.close} ≥ level {level}")
+            reasons.append(f"B: close {candle.close} >= level {level}")
     if body < threshold:
         reasons.append(f"B: body {body:.2f} < {threshold}")
     return LayerResult(len(reasons) == 0, reasons)
@@ -111,7 +111,7 @@ def layer_d_retest(
             if next_candle.close > level:
                 return RetestVerdict(True, "RETEST", [])
             return RetestVerdict(False, "FAIL", [
-                f"D: retest at level failed — close {next_candle.close} ≤ level"])
+                f"D: retest at level failed - close {next_candle.close} <= level"])
         # Continuation
         if next_candle.low > level - tol:
             return RetestVerdict(True, "CONTINUATION", [])
@@ -125,7 +125,7 @@ def layer_d_retest(
         if next_candle.close < level:
             return RetestVerdict(True, "RETEST", [])
         return RetestVerdict(False, "FAIL", [
-            f"D: retest at level failed — close {next_candle.close} ≥ level"])
+            f"D: retest at level failed - close {next_candle.close} >= level"])
     if next_candle.high < level + tol:
         return RetestVerdict(True, "CONTINUATION", [])
     return RetestVerdict(False, "FAIL", ["D: ambiguous continuation"])
@@ -163,7 +163,7 @@ def evaluate_entry(
         return EntryEvaluation(False, direction, b, c, None, None)
 
     if next_candle is None:
-        # Caller hasn't waited for next candle yet — defer
+        # Caller hasn't waited for next candle yet - defer
         return EntryEvaluation(False, direction, b, c, None, "PENDING_RETEST")
 
     d = layer_d_retest(confirmation_candle, next_candle, direction,

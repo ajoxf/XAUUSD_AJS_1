@@ -39,14 +39,14 @@ def cmd_premarket(settings: Settings, logger: StructuredLogger) -> int:
     ctx = engine.start_day(today)
     broker.disconnect()
     if ctx is None:
-        print("Pre-market build failed — see logs", file=sys.stderr)
+        print("Pre-market build failed - see logs", file=sys.stderr)
         return 1
     print(f"Pre-market for {ctx.trade_date}:")
     print(f"  range={ctx.range:.2f} atr20={ctx.atr_20:.2f} regime={ctx.regime}")
     print(f"  trend_bias={ctx.trend_bias} event_blocked={ctx.event_blocked}")
     print(f"  long: entry={ctx.long_entry:.2f} tp1={ctx.long_tp1:.2f} tp2={ctx.long_tp2:.2f}")
     print(f"  short: entry={ctx.short_entry:.2f} tp1={ctx.short_tp1:.2f} tp2={ctx.short_tp2:.2f}")
-    print(f"  session: {ctx.session_start_utc} → {ctx.session_end_utc} UTC")
+    print(f"  session: {ctx.session_start_utc} -> {ctx.session_end_utc} UTC")
     return 0
 
 
@@ -89,7 +89,7 @@ def cmd_live(settings: Settings, logger: StructuredLogger) -> int:
                 # from MT5 and run signal evaluation. Out of scope: see
                 # tests/integration/test_end_to_end.py for the deterministic
                 # version that exercises the same code path.
-                logger.info("15m boundary — signal scan stub (see runner docs)")
+                logger.info("15m boundary - signal scan stub (see runner docs)")
 
             time.sleep(5)
     except KeyboardInterrupt:

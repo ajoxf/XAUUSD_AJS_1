@@ -1,4 +1,4 @@
-"""Seasonal long-bias multiplier — spec §2."""
+"""Seasonal long-bias multiplier - spec §2."""
 
 SEASONAL_MULTIPLIER = {
     1: 1.10, 2: 1.10, 3: 1.05,

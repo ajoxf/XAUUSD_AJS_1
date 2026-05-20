@@ -44,8 +44,8 @@ class Settings:
     max_spread_per_oz: float = 0.50
     max_slippage_per_oz: float = 0.30
     min_range_floor: float = 10.0
-    atr_short_period: int = 20      # fast ATR — range floor + Filter C
-    atr_long_period: int = 50       # slow ATR — regime baseline
+    atr_short_period: int = 20      # fast ATR - range floor + Filter C
+    atr_long_period: int = 50       # slow ATR - regime baseline
     atr_cap_multiplier: float = 1.8
     body_ratio_threshold: float = 0.60
     rsi_long_min: float = 45.0
@@ -67,6 +67,10 @@ class Settings:
     # confirmation_timeout_sec.
     require_confirmation: bool = False
     confirmation_timeout_sec: int = 30
+
+    # Order-send resilience (MT5)
+    order_max_attempts: int = 3          # retries on requote / price-changed
+    order_retry_backoff_sec: float = 0.5  # base backoff between attempts
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -94,4 +98,6 @@ class Settings:
             require_confirmation=os.getenv("REQUIRE_CONFIRMATION",
                                              "false").lower() in ("1", "true", "yes"),
             confirmation_timeout_sec=int(os.getenv("CONFIRMATION_TIMEOUT_SEC", "30")),
+            order_max_attempts=int(os.getenv("ORDER_MAX_ATTEMPTS", "3")),
+            order_retry_backoff_sec=float(os.getenv("ORDER_RETRY_BACKOFF_SEC", "0.5")),
         )

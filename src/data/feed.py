@@ -1,4 +1,4 @@
-"""DataFeed protocol — abstracts historical/intraday OHLC retrieval."""
+"""DataFeed protocol - abstracts historical/intraday OHLC retrieval."""
 from __future__ import annotations
 
 from datetime import date, datetime

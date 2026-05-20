@@ -53,7 +53,7 @@ class BrokerAdapter(ABC):
 
     @abstractmethod
     def balance(self) -> float:
-        """Realised account balance — does not move while a trade is open."""
+        """Realised account balance - does not move while a trade is open."""
 
     @abstractmethod
     def quote(self, symbol: str) -> TickQuote: ...

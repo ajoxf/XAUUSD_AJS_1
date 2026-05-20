@@ -1,4 +1,4 @@
-"""Pre-trade gates — spec §3 v3.2. Every gate must pass before signal accepted."""
+"""Pre-trade gates - spec §3 v3.2. Every gate must pass before signal accepted."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -24,10 +24,10 @@ def _check_g1_atr(ctx: PremarketContext, settings: Settings) -> List[str]:
         fails.append(f"G1: range {ctx.range:.2f} < ATR20 {ctx.atr_20:.2f}")
     cap = settings.atr_cap_multiplier
     if FLAGS.FILTER_A_ATR_CAP and ctx.range > cap * ctx.atr_20:
-        fails.append(f"G1: range {ctx.range:.2f} > {cap}×ATR20 {cap * ctx.atr_20:.2f}")
+        fails.append(f"G1: range {ctx.range:.2f} > {cap}xATR20 {cap * ctx.atr_20:.2f}")
     if FLAGS.FIX_L3_ATR_CAP and ctx.range > cap * ctx.range_10d_median:
         fails.append(
-            f"G1: range {ctx.range:.2f} > {cap}×median10 {cap * ctx.range_10d_median:.2f}"
+            f"G1: range {ctx.range:.2f} > {cap}xmedian10 {cap * ctx.range_10d_median:.2f}"
         )
     return fails
 
@@ -80,7 +80,7 @@ def _check_g6_sma200_short(ctx: PremarketContext, direction: str) -> List[str]:
     if direction != "SHORT":
         return []
     if ctx.prev_close > ctx.sma200_daily:
-        return [f"G6: short blocked — price {ctx.prev_close:.2f} > "
+        return [f"G6: short blocked - price {ctx.prev_close:.2f} > "
                 f"SMA200 {ctx.sma200_daily:.2f}"]
     return []
 

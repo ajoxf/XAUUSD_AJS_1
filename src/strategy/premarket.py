@@ -1,4 +1,4 @@
-"""Pre-market calculation — spec §2 v3.2. Runs once daily at 00:05 UTC.
+"""Pre-market calculation - spec §2 v3.2. Runs once daily at 00:05 UTC.
 
 Produces a frozen `PremarketContext` carrying every value the intraday loop
 needs. Nothing in §2 is recomputed during the session.
@@ -38,7 +38,7 @@ class PremarketContext:
     ema50_4h: float
     ema5_daily_now: float
     ema5_daily_prev: float
-    sma200_daily: float                 # v3.2 — Opt 4
+    sma200_daily: float                 # v3.2 - Opt 4
 
     # Regime
     regime: Regime
@@ -56,7 +56,7 @@ class PremarketContext:
     short_tp1: float
     long_tp2: float
     short_tp2: float
-    long_tp2_fib: float                 # v3.2 — final fib used
+    long_tp2_fib: float                 # v3.2 - final fib used
     short_tp2_fib: float
 
     # Filter flags
@@ -64,8 +64,8 @@ class PremarketContext:
     filter_f_suppressed: bool
     long_filter_f: bool
     short_filter_f: bool
-    back_to_back_active: bool           # v3.2 — Opt 2
-    high_atr_extension_active: bool     # v3.2 — Opt 3
+    back_to_back_active: bool           # v3.2 - Opt 2
+    high_atr_extension_active: bool     # v3.2 - Opt 3
 
     # Trail
     trail_distance_base: float
@@ -111,7 +111,7 @@ def _tp2_fib(filter_f_active: bool, base_high_atr: bool,
 
     1. Base = 1.272 if Filter F active, else 1.000
     2. Opt 2: if yesterday closed at TP2 → +0.10 (cap at 1.400)
-    3. Opt 3: if high-ATR day (1.3×–1.8× ATR) AND F not active → set to 1.150
+    3. Opt 3: if high-ATR day (1.3x-1.8x ATR) AND F not active → set to 1.150
 
     Returns (fib, back_to_back_active, high_atr_extension_active).
     """
@@ -139,19 +139,19 @@ def build_premarket(
     atr_short_period: int = 20,
     atr_long_period: int = 50,
 ) -> PremarketContext:
-    """All required history must already be in `daily_df` (≥201 bars for
-    SMA200, and ≥atr_long_period+1) and `h4_closes` (≥50). Indexed ascending."""
+    """All required history must already be in `daily_df` (>=201 bars for
+    SMA200, and >=atr_long_period+1) and `h4_closes` (>=50). Indexed ascending."""
     if atr_short_period < 2 or atr_long_period < 2:
-        raise ValueError("ATR periods must be ≥ 2")
+        raise ValueError("ATR periods must be >= 2")
     if atr_short_period >= atr_long_period:
         raise ValueError("atr_short_period must be < atr_long_period (regime ratio "
                          "requires short=fast vs long=slow)")
     min_daily = max(201, atr_long_period + 1)
     if len(daily_df) < min_daily:
-        raise ValueError(f"daily_df needs ≥{min_daily} rows "
+        raise ValueError(f"daily_df needs >={min_daily} rows "
                          f"(SMA200 + ATR({atr_long_period})), got {len(daily_df)}")
     if len(h4_closes) < 50:
-        raise ValueError(f"h4_closes needs ≥50 rows for EMA(50) on 4H, got {len(h4_closes)}")
+        raise ValueError(f"h4_closes needs >=50 rows for EMA(50) on 4H, got {len(h4_closes)}")
 
     prev = daily_df.iloc[-1]
     prev_open = float(prev["open"])
@@ -213,7 +213,7 @@ def build_premarket(
                            range_, atr_20, "SHORT")
     )
 
-    # v3.2 — high-ATR base condition: 1.3× ≤ range ≤ 1.8× ATR
+    # v3.2 - high-ATR base condition: 1.3x <= range <= 1.8x ATR
     base_high_atr = (atr_20 * 1.30 <= range_ <= atr_20 * 1.80) and not filter_c_active
 
     long_tp2_fib, long_b2b, long_high_atr = _tp2_fib(

@@ -1,4 +1,4 @@
-"""Aggregate runtime state for the engine — v3.2."""
+"""Aggregate runtime state for the engine - v3.2."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -58,13 +58,13 @@ class EngineState:
     position: Optional[PositionState] = None
     tickets: List[OrderTicket] = field(default_factory=list)
 
-    # v3.2 — confirm-trade workflow (manual approval before order send)
+    # v3.2 - confirm-trade workflow (manual approval before order send)
     pending_entry: Optional[PendingEntry] = None
 
-    # v3.2 — carried context for Opt 2 (back-to-back TP2 extension)
+    # v3.2 - carried context for Opt 2 (back-to-back TP2 extension)
     prev_session_close_type: Optional[str] = None
 
-    # v3.2 — track 15-min closes since TP1 hit for Opt 6 RSI trim
+    # v3.2 - track 15-min closes since TP1 hit for Opt 6 RSI trim
     closes_15m_post_tp1: List[float] = field(default_factory=list)
 
     # Per-week aggregates

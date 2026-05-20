@@ -37,7 +37,7 @@ class FeatureFlags:
     OPT_SEASONAL_SIZING: bool = True
     OPT_REGIME_DETECTOR: bool = True
     OPT_3PCT_RISK: bool = True
-    OPT_DOM_GATE: bool = False                  # disabled — retail DOM unreliable
+    OPT_DOM_GATE: bool = False                  # disabled - retail DOM unreliable
 
     # ── v3.2 return-enhancement optimisations ────────────
     OPT_1_COMEX_VOL_CONTINUATION: bool = True

@@ -1,4 +1,4 @@
-"""Dry-run broker adapter — wraps another broker, intercepts writes.
+"""Dry-run broker adapter - wraps another broker, intercepts writes.
 
 In `MODE=dryrun` the bot computes everything (gates, sizing, entries, exits)
 but every order-affecting call (open_market, modify_sl, modify_tp, close)
@@ -32,7 +32,7 @@ class DryRunAdapter(BrokerAdapter):
     # ── pass-through ─────────────────────────────────────
     def connect(self) -> None:
         self.wrapped.connect()
-        log.info("DRYRUN adapter active — orders will be simulated only")
+        log.info("DRYRUN adapter active - orders will be simulated only")
 
     def disconnect(self) -> None:
         self.wrapped.disconnect()
@@ -68,13 +68,13 @@ class DryRunAdapter(BrokerAdapter):
         return ticket
 
     def modify_sl(self, ticket: OrderTicket, new_sl: float) -> bool:
-        log.warning("[DRYRUN] MODIFY SL ticket=%d %.2f → %.2f",
+        log.warning("[DRYRUN] MODIFY SL ticket=%d %.2f -> %.2f",
                      ticket.broker_id, ticket.sl, new_sl)
         ticket.sl = float(new_sl)
         return True
 
     def modify_tp(self, ticket: OrderTicket, new_tp: float) -> bool:
-        log.warning("[DRYRUN] MODIFY TP ticket=%d %s → %.2f",
+        log.warning("[DRYRUN] MODIFY TP ticket=%d %s -> %.2f",
                      ticket.broker_id,
                      f"{ticket.tp:.2f}" if ticket.tp is not None else "None", new_tp)
         ticket.tp = float(new_tp)

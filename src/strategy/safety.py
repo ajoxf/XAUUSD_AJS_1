@@ -1,4 +1,4 @@
-"""Risk safety controls — spec §8."""
+"""Risk safety controls - spec §8."""
 from __future__ import annotations
 
 from collections import deque
@@ -12,7 +12,7 @@ from config.settings import Settings
 
 @dataclass
 class DailyTradeLock:
-    """Hard date-keyed lock — Fix L2."""
+    """Hard date-keyed lock - Fix L2."""
     fired_date: Optional[date] = None
 
     def has_fired(self, today: date) -> bool:
@@ -27,7 +27,7 @@ class DailyTradeLock:
 
 @dataclass
 class WinRateMonitor:
-    """Dual-speed monitor — Fix L9, enhanced v3.0.
+    """Dual-speed monitor - Fix L9, enhanced v3.0.
 
     Stores TP1 outcomes (True = TP1 reached, False = SL before TP1).
     """

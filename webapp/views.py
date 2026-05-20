@@ -37,7 +37,7 @@ def _flag_descriptions():
     return {
         "Original filters (v1.0)": [
             ("FILTER_A_ATR_RANGE", "Skip days where range < 20-day ATR (too quiet)"),
-            ("FILTER_A_ATR_CAP", "Skip days where range > 1.8× ATR (post-shock)"),
+            ("FILTER_A_ATR_CAP", "Skip days where range > 1.8x ATR (post-shock)"),
             ("FILTER_B_SESSION_DST", "Trade only inside DST-aware NY session window"),
             ("FILTER_C_DYNAMIC_TP1", "Reduce TP1 to 50% on low-volatility days"),
             ("FILTER_D_TRAILING_STOP", "Trail the final tranche after TP2"),
@@ -57,7 +57,7 @@ def _flag_descriptions():
             ("FIX_L9_FAST_WINRATE_MONITOR", "20-trade fast brake on win rate drops"),
         ],
         "v3.0 / 3.1 optimisations": [
-            ("OPT_STEP1_BODY_60PCT", "Confirmation candle body ≥ 60% of range"),
+            ("OPT_STEP1_BODY_60PCT", "Confirmation candle body >= 60% of range"),
             ("OPT_STEP2_4H_TREND_HARD", "Hard block trades against the 4-hour trend"),
             ("OPT_STEP3_RSI_ZONE", "RSI in neutral momentum zone at entry"),
             ("OPT_STEP4_RETEST_CONFIRM", "Require re-test or clean continuation"),

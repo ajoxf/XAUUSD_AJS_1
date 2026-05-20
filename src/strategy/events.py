@@ -1,6 +1,6 @@
-"""Economic event calendar — spec §3 Gate 3 + Fix L7.
+"""Economic event calendar - spec §3 Gate 3 + Fix L7.
 
-Hardcoded FOMC / NFP / CPI dates 2021–2026. CPI blocks the release day only;
+Hardcoded FOMC / NFP / CPI dates 2021-2026. CPI blocks the release day only;
 FOMC and NFP block the release day AND the prior US business day.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ FOMC_DATES = {
 }
 
 NFP_DATES = {
-    # First Friday of each month, 2021–2026 (verified release dates).
+    # First Friday of each month, 2021-2026 (verified release dates).
     date(2021, 1, 8), date(2021, 2, 5), date(2021, 3, 5), date(2021, 4, 2),
     date(2021, 5, 7), date(2021, 6, 4), date(2021, 7, 2), date(2021, 8, 6),
     date(2021, 9, 3), date(2021, 10, 8), date(2021, 11, 5), date(2021, 12, 3),
