@@ -485,6 +485,87 @@ def test_live_mode_feed_falls_back_to_yfinance_without_mt5(tmp_path, caplog):
     assert any("futures prices differ" in r.message for r in caplog.records)
 
 
+def test_ticker_includes_source_field(app):
+    """Ticker payload reports which source the quote came from."""
+    from src.broker.paper_adapter import PaperAdapter
+    sup = app.config["SUPERVISOR"]
+    broker = PaperAdapter(starting_equity=100_000.0, spread=0.20)
+    broker.set_quote(mid=2000.0)
+    sup.broker = broker
+    data = app.test_client().get("/api/ticker").get_json()
+    assert "source" in data
+    # Paper mode trading broker → source 'paper'
+    assert data["source"] in ("paper", "MT5")
+
+
+def test_ticker_prefers_mt5_reference_in_paper(app):
+    """In paper mode with an MT5 reference attached, the ticker reads MT5."""
+    from src.broker.paper_adapter import PaperAdapter
+    sup = app.config["SUPERVISOR"]
+    # Trading broker = paper sim; reference = stand-in 'MT5'
+    sup.broker = PaperAdapter(starting_equity=100_000.0, spread=0.50)
+    sup.broker.set_quote(mid=1000.0)
+    ref = PaperAdapter(starting_equity=100_000.0, spread=0.20)
+    ref.set_quote(mid=2456.78)
+    sup.reference_broker = ref
+    q, source = sup.quote_for_display()
+    assert source == "MT5"
+    assert q.mid == pytest.approx(2456.78)
+
+
+def test_manual_open_blocked_in_paper(app):
+    """Manual orders are disabled in paper mode."""
+    r = app.test_client().post("/api/orders/open",
+                                json={"direction": "LONG", "lots": 0.1})
+    data = r.get_json()
+    assert data["ok"] is False
+    assert "paper" in data["error"].lower()
+
+
+def test_manual_open_bad_input_returns_400(app):
+    r = app.test_client().post("/api/orders/open", json={"lots": 0.1})  # no direction
+    assert r.status_code == 400
+    assert r.get_json()["ok"] is False
+
+
+def test_manual_close_endpoints_exist(app):
+    client = app.test_client()
+    # No position → close returns ok=False gracefully
+    assert client.post("/api/orders/close").status_code == 200
+    # close_all with no broker connected → ok False
+    out = client.post("/api/orders/close_all").get_json()
+    assert "ok" in out
+
+
+def test_manual_open_in_dryrun_mode(tmp_path):
+    """In dryrun mode with a (paper) broker injected, manual_open succeeds."""
+    from dataclasses import replace
+    from src.broker.paper_adapter import PaperAdapter
+    s = Settings(
+        mt5_login=0, mt5_password="", mt5_server="", mt5_terminal_path="",
+        symbol="XAUUSD", starting_equity=100_000.0, risk_pct=0.03,
+        magic_number=1, mode="dryrun", log_level="WARNING",
+        log_dir=tmp_path / "logs", comex_webhook_enabled=False,
+    )
+    app = create_app(s)
+    sup = app.config["SUPERVISOR"]
+    broker = PaperAdapter(starting_equity=100_000.0, spread=0.20)
+    broker.set_quote(mid=2000.0)
+    sup.broker = broker
+    result = sup.manual_open("LONG", 0.10, sl=1990.0, tp=2010.0)
+    assert result["ok"] is True
+    assert result["side"] == "BUY"
+    assert len(sup.manual_tickets) == 1
+
+
+def test_dashboard_has_manual_order_panel(client):
+    r = client.get("/")
+    assert b"Manual order" in r.data
+    assert b"btn-manual-open" in r.data
+    assert b"btn-flatten-all" in r.data
+    assert b"btn-close-position" in r.data
+
+
 def test_circuit_breaker_uses_configured_threshold(monkeypatch):
     """The CircuitBreaker safety check honours settings.circuit_breaker_pct."""
     from datetime import datetime, timezone

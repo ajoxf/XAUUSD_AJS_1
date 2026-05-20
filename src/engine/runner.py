@@ -94,6 +94,10 @@ class Engine:
         except Exception as exc:
             self.log.warn(f"Reconcile: open_tickets() failed: {exc}")
             return False
+        # Only adopt STRATEGY tickets (v3.2 H1/H2). Manual orders are
+        # tracked separately and must not become the strategy position.
+        tickets = [t for t in tickets
+                   if t.comment.endswith("H1") or t.comment.endswith("H2")]
         if not tickets:
             return False
 
@@ -181,6 +185,68 @@ class Engine:
             if ctx is not None:
                 pos.trail_distance = 0.382 * ctx.range
         return pos
+
+    # ── External-close detection ──────────────────────────
+    def reconcile_external_closes(self, now_utc: datetime, price: float) -> bool:
+        """Detect tranches closed outside the bot — manual close in the MT5
+        terminal, broker-side SL/TP, or margin call. Marks any vanished
+        tranche EXTERNAL_CLOSE. Returns True if anything was detected.
+
+        Only meaningful in live/dryrun (paper has no external actor)."""
+        if self.settings.mode not in ("live", "dryrun"):
+            return False
+        pos = self.state.position
+        if pos is None or pos.closed:
+            return False
+        try:
+            broker_tickets = self.broker.open_tickets(self.settings.symbol,
+                                                        self.settings.magic_number)
+        except Exception as exc:
+            self.log.warn(f"External-close check failed: {exc}")
+            return False
+        live_ids = {t.broker_id for t in broker_tickets}
+
+        detected = False
+        for tranche in pos.open_tranches:
+            ticket = next((x for x in self.state.tickets
+                           if x.comment.endswith(tranche.name)), None)
+            if ticket is None:
+                continue
+            if ticket.broker_id not in live_ids:
+                tranche.is_open = False
+                tranche.close_price = price
+                tranche.close_reason = CloseReason.EXTERNAL_CLOSE
+                tranche.close_time_utc = now_utc
+                detected = True
+                self.log.event("external_close", {
+                    "tranche": tranche.name,
+                    "ticket": ticket.broker_id,
+                    "price": price,
+                    "note": "closed outside the bot (MT5 terminal / broker)",
+                })
+
+        if detected and pos.is_fully_closed:
+            pos.closed = True
+            self._post_trade_bookkeeping(pos)
+        return detected
+
+    def force_close_position(self, now_utc: datetime, price: float,
+                              reason: CloseReason = CloseReason.EXTERNAL_CLOSE) -> bool:
+        """Close every open tranche of the current strategy position at market.
+        Used by the dashboard "Close position now" button."""
+        pos = self.state.position
+        if pos is None or pos.closed:
+            return False
+        for tranche in list(pos.open_tranches):
+            tranche.is_open = False
+            tranche.close_price = price
+            tranche.close_reason = reason
+            tranche.close_time_utc = now_utc
+            self._record_close(tranche)
+        pos.closed = True
+        self._post_trade_bookkeeping(pos)
+        self.log.event("manual_close", {"reason": reason.value, "price": price})
+        return True
 
     # ── Signal evaluation (called per 15m candle close) ──
     def evaluate_signal(
@@ -434,6 +500,13 @@ class Engine:
         pos = self.state.position
         if pos is None or pos.closed:
             return
+
+        # Detect tranches closed outside the bot before we try to manage them
+        self.reconcile_external_closes(now_utc, tick_price)
+        pos = self.state.position
+        if pos is None or pos.closed:
+            return
+
         ctx = self.state.premarket
         if ctx is None:
             return

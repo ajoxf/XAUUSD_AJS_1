@@ -62,7 +62,7 @@
         return;
       }
 
-      setTickerState("live", "live");
+      setTickerState("live", t.source === "MT5" ? "live · MT5" : "paper · sim");
 
       const bidEl = $("ticker-bid");
       const askEl = $("ticker-ask");
@@ -397,12 +397,68 @@
   document.getElementById("btn-cancel-trade")
     ?.addEventListener("click", () => postConfirm("cancel_trade"));
 
+  // ── Manual order controls ────────────────────────────
+  function renderManualControls(snap) {
+    const enabled = snap.mode === "live" || snap.mode === "dryrun";
+    document.getElementById("manual-disabled").classList.toggle("d-none", enabled);
+    document.getElementById("manual-controls").classList.toggle("d-none", !enabled);
+    // Show "Close position now" only when a strategy position is open
+    const closeBtn = document.getElementById("btn-close-position");
+    if (closeBtn) closeBtn.classList.toggle("d-none", !snap.position);
+  }
+
+  function manualResult(msg, ok) {
+    const el = document.getElementById("manual-result");
+    el.textContent = msg;
+    el.className = "small mt-2 " + (ok ? "text-success" : "text-danger");
+  }
+
+  async function postJSON(url, body) {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { ok: r.ok, data: await r.json().catch(() => ({})) };
+  }
+
+  document.getElementById("btn-manual-open")?.addEventListener("click", async () => {
+    const direction = document.getElementById("manual-direction").value;
+    const lots = parseFloat(document.getElementById("manual-lots").value);
+    const sl = document.getElementById("manual-sl").value || null;
+    const tp = document.getElementById("manual-tp").value || null;
+    const { ok, data } = await postJSON("/api/orders/open", { direction, lots, sl, tp });
+    if (ok && data.ok) {
+      manualResult(`Opened ${data.side} ${lots} lots @ ${data.price} (ticket ${data.ticket})`, true);
+    } else {
+      manualResult("Open failed: " + (data.error || "unknown"), false);
+    }
+    App.fetchOnce();
+  });
+
+  document.getElementById("btn-close-position")?.addEventListener("click", async () => {
+    if (!confirm("Close the bot's current strategy position at market?")) return;
+    const { data } = await postJSON("/api/orders/close");
+    manualResult(data.ok ? "Strategy position closed." :
+                  "Close failed: " + (data.error || "no open position"), data.ok);
+    App.fetchOnce();
+  });
+
+  document.getElementById("btn-flatten-all")?.addEventListener("click", async () => {
+    if (!confirm("Flatten ALL positions (strategy + manual) for this bot?")) return;
+    const { data } = await postJSON("/api/orders/close_all");
+    manualResult(data.ok ? `Flattened ${data.closed} position(s).` :
+                  "Flatten failed: " + (data.error || "unknown"), data.ok);
+    App.fetchOnce();
+  });
+
   App.onSnapshot(snap => {
     renderHeader(snap);
     renderLevels(snap);
     renderPlan(snap);
     renderPending(snap);
     renderPosition(snap);
+    renderManualControls(snap);
     renderWeek(snap);
     renderMonitors(snap);
     renderEvents(snap);

@@ -32,6 +32,7 @@ class CloseReason(str, Enum):
     REGIME_OVERRIDE = "REGIME_OVERRIDE"
     COMEX_VOL_FADE = "COMEX_VOL_FADE"
     RSI_TRIM = "RSI_TRIM"
+    EXTERNAL_CLOSE = "EXTERNAL_CLOSE"   # closed in MT5 terminal / by broker
 
 
 @dataclass

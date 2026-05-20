@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from config.settings import Settings
-from src.broker.adapter import BrokerAdapter
+from src.broker.adapter import BrokerAdapter, OrderTicket
 from src.broker.paper_adapter import PaperAdapter
 from src.data.yfinance_feed import YFinanceFeed
 from src.engine.logger import StructuredLogger
@@ -82,6 +82,8 @@ class EngineSupervisor:
         # Optional read-only MT5 connection used in paper mode to surface
         # the real account balance on the dashboard while paper trades run.
         self.reference_broker: Optional[BrokerAdapter] = None
+        # Manually-opened orders (comment="MANUAL"), independent of strategy.
+        self.manual_tickets: List[OrderTicket] = []
         self.logger: Optional[StructuredLogger] = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -475,6 +477,103 @@ class EngineSupervisor:
                 week=week, monitor=monitor,
                 recent_events=self._read_recent_events(recent_events_limit),
             )
+
+    def _quote_broker(self):
+        """Pick the broker to read live quotes from, preferring an MT5
+        source so the ticker always reflects the real account/instrument.
+        Order: live/dryrun trading broker (MT5) > reference broker (MT5 in
+        paper) > trading broker (paper sim) > None."""
+        if self.broker is not None and self.settings.mode in ("live", "dryrun"):
+            return self.broker, "MT5"
+        if self.reference_broker is not None:
+            return self.reference_broker, "MT5"
+        if self.broker is not None:
+            return self.broker, "paper"
+        return None, "none"
+
+    def quote_for_display(self):
+        """Returns (TickQuote, source_label) or (None, 'none')."""
+        broker, source = self._quote_broker()
+        if broker is None:
+            return None, "none"
+        try:
+            return broker.quote(self.settings.symbol), source
+        except Exception:
+            return None, "none"
+
+    # ── Manual order controls ────────────────────────────
+    def manual_open(self, direction: str, lots: float,
+                    sl: Optional[float] = None,
+                    tp: Optional[float] = None) -> Dict[str, Any]:
+        from src.broker.adapter import OrderSide
+        with self._lock:
+            if self.broker is None:
+                return {"ok": False, "error": "broker not connected — press Start "
+                        "or, in paper mode, manual trading is unavailable"}
+            if self.settings.mode == "paper":
+                return {"ok": False, "error": "manual orders are disabled in paper "
+                        "mode (no real broker). Use dryrun or live."}
+            side = OrderSide.BUY if direction.upper() in ("LONG", "BUY") else OrderSide.SELL
+            try:
+                ticket = self.broker.open_market(
+                    symbol=self.settings.symbol, side=side, volume_lots=float(lots),
+                    sl=float(sl) if sl else 0.0,
+                    tp=float(tp) if tp else None,
+                    comment="MANUAL", magic=self.settings.magic_number,
+                    max_slippage_per_oz=self.settings.max_slippage_per_oz)
+                self.manual_tickets.append(ticket)
+                log.warning("MANUAL OPEN %s %.2f lots @ %.2f (sl=%s tp=%s) ticket=%d",
+                             side.value, lots, ticket.open_price,
+                             sl or "none", tp or "none", ticket.broker_id)
+                return {"ok": True, "ticket": ticket.broker_id,
+                        "price": ticket.open_price, "side": side.value}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+
+    def manual_close_strategy(self) -> Dict[str, Any]:
+        """Close the bot's current strategy position at market."""
+        with self._lock:
+            if self.engine is None or self.broker is None:
+                return {"ok": False, "error": "no engine/broker"}
+            pos = self.engine.state.position
+            if pos is None or pos.closed:
+                return {"ok": False, "error": "no open strategy position"}
+            from src.strategy.exits import CloseReason
+            try:
+                price = self.broker.quote(self.settings.symbol).mid
+            except Exception:
+                price = pos.entry_price
+            ok = self.engine.force_close_position(
+                datetime.now(tz=timezone.utc), price, CloseReason.EXTERNAL_CLOSE)
+            return {"ok": ok}
+
+    def manual_close_all(self) -> Dict[str, Any]:
+        """Flatten everything carrying our magic — strategy + manual orders."""
+        with self._lock:
+            if self.broker is None:
+                return {"ok": False, "error": "broker not connected"}
+            closed = 0
+            # 1. Strategy position via engine
+            if self.engine is not None and self.engine.state.position is not None \
+                    and not self.engine.state.position.closed:
+                self.manual_close_strategy()
+                closed += 1
+            # 2. Any remaining tickets with our magic (manual + orphans)
+            try:
+                tickets = self.broker.open_tickets(self.settings.symbol,
+                                                     self.settings.magic_number)
+                for t in tickets:
+                    try:
+                        self.broker.close(t, t.volume_lots)
+                        closed += 1
+                    except Exception as exc:
+                        log.warning("Flatten: failed to close ticket %d: %s",
+                                     t.broker_id, exc)
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+            self.manual_tickets = []
+            log.warning("FLATTEN ALL — closed %d position(s)", closed)
+            return {"ok": True, "closed": closed}
 
     def _resolve_balance(self) -> tuple:
         """Returns (equity, balance, source_label) using the best available

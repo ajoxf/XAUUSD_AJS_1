@@ -100,9 +100,67 @@
 </section>
 
 <section class="card mb-3">
-  <div class="card-header"><h2>Open position</h2></div>
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h2>Open position</h2>
+    <button id="btn-close-position" class="btn btn-sm btn-danger d-none">
+      Close position now
+    </button>
+  </div>
   <div class="card-body" id="position-body">
     <div class="muted">No open position.</div>
+  </div>
+</section>
+
+<section class="card mb-3">
+  <div class="card-header"><h2>Manual order</h2></div>
+  <div class="card-body">
+    <div id="manual-disabled" class="muted">
+      Manual trading is available in <code>live</code> and <code>dryrun</code>
+      modes only.
+    </div>
+    <div id="manual-controls" class="d-none">
+      <div class="row g-2 align-items-end">
+        <div class="col-auto">
+          <label class="form-label small">Direction</label>
+          <select id="manual-direction" class="form-select form-select-sm">
+            <option value="LONG">Buy / Long</option>
+            <option value="SHORT">Sell / Short</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <label class="form-label small">Lots</label>
+          <input id="manual-lots" type="number" step="0.01" min="0.01"
+                 value="0.10" class="form-control form-control-sm" style="width:90px">
+        </div>
+        <div class="col-auto">
+          <label class="form-label small">Stop loss (optional)</label>
+          <input id="manual-sl" type="number" step="0.01"
+                 class="form-control form-control-sm" style="width:120px"
+                 placeholder="none">
+        </div>
+        <div class="col-auto">
+          <label class="form-label small">Take profit (optional)</label>
+          <input id="manual-tp" type="number" step="0.01"
+                 class="form-control form-control-sm" style="width:120px"
+                 placeholder="none">
+        </div>
+        <div class="col-auto">
+          <button id="btn-manual-open" class="btn btn-sm btn-primary">Open order</button>
+        </div>
+        <div class="col-auto">
+          <button id="btn-flatten-all" class="btn btn-sm btn-outline-danger">
+            Flatten all
+          </button>
+        </div>
+      </div>
+      <div id="manual-result" class="small mt-2"></div>
+      <div class="form-text">
+        Manual orders are tagged <code>MANUAL</code> and are independent of the
+        strategy — the bot won't apply TP1/trail management to them.
+        "Flatten all" closes everything (strategy + manual) carrying this
+        bot's magic number.
+      </div>
+    </div>
   </div>
 </section>
 

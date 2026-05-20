@@ -115,6 +115,38 @@ def cancel_trade():
     return jsonify({"ok": ok})
 
 
+# ── Manual order controls ───────────────────────────────
+@bp.post("/orders/open")
+def manual_open():
+    """Manually open a market order (live/dryrun only). Body:
+    {direction: LONG|SHORT, lots: float, sl?: float, tp?: float}"""
+    sup = _supervisor()
+    data = request.get_json(silent=True) or request.form.to_dict()
+    try:
+        direction = str(data["direction"])
+        lots = float(data["lots"])
+    except (KeyError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"bad input: {exc}"}), 400
+    sl = float(data["sl"]) if data.get("sl") not in (None, "", "0") else None
+    tp = float(data["tp"]) if data.get("tp") not in (None, "", "0") else None
+    result = sup.manual_open(direction, lots, sl, tp)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@bp.post("/orders/close")
+def manual_close():
+    """Close the bot's current strategy position at market."""
+    sup = _supervisor()
+    return jsonify(sup.manual_close_strategy())
+
+
+@bp.post("/orders/close_all")
+def manual_close_all():
+    """Flatten everything carrying our magic number — strategy + manual."""
+    sup = _supervisor()
+    return jsonify(sup.manual_close_all())
+
+
 # ── Settings ────────────────────────────────────────────
 @bp.get("/settings")
 def get_settings():
@@ -272,22 +304,20 @@ def ticker():
     payload = {
         "symbol": s.symbol,
         "max_spread": s.max_spread_per_oz,
-        "stale": True,
+        "stale": True, "source": "none",
         "bid": None, "ask": None, "spread": None, "mid": None,
         "time": None, "error": None,
     }
-    if sup.broker is None:
-        payload["error"] = "broker not initialised"
+    q, source = sup.quote_for_display()
+    payload["source"] = source
+    if q is None:
+        payload["error"] = "no quote source (start the bot or MT5)"
         return jsonify(payload)
-    try:
-        q = sup.broker.quote(s.symbol)
-        payload.update({
-            "bid": q.bid, "ask": q.ask, "spread": q.spread, "mid": q.mid,
-            "time": q.time_utc.isoformat(),
-            "stale": False,
-        })
-    except Exception as exc:
-        payload["error"] = f"{type(exc).__name__}: {exc}"
+    payload.update({
+        "bid": q.bid, "ask": q.ask, "spread": q.spread, "mid": q.mid,
+        "time": q.time_utc.isoformat(),
+        "stale": False,
+    })
     return jsonify(payload)
 
 
