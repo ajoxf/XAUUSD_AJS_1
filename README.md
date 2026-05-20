@@ -41,7 +41,7 @@ src/strategy/       pure rule engine (no I/O)
   events              FOMC/NFP/CPI calendar 2021–2026
   session             DST-aware NY session window
   safety              circuit breaker, win-rate monitors, daily lock, loss counter
-src/data/           DataFeed protocol + yfinance implementation
+src/data/           DataFeed protocol + MT5 feed (live) + yfinance (paper)
 src/broker/         BrokerAdapter protocol + MT5 + paper adapters
 src/integrations/   TradingView webhook receiver (port 5050)
 src/engine/         runtime: state, structured logger, runner, weekly reports
@@ -155,6 +155,24 @@ minutes), the bot falls back to the standard trail-to-TP2 exit without
 blocking trading.
 
 The receiver is implemented in Python stdlib only — no Flask required.
+
+## Where prices come from
+
+| Data | live / dryrun | paper |
+|---|---|---|
+| Daily / 4H / 15m OHLC (Fibonacci levels, ATR, SMA, EMA) | **MT5** (`copy_rates_from_pos`) | yfinance `GC=F` |
+| Live ticker bid/ask/spread | MT5 `symbol_info_tick` | simulated |
+| Order execution | MT5 | simulated |
+| Balance / equity | MT5 `account_info` | `STARTING_EQUITY` |
+
+In **live and dryrun** modes every number — levels, ticker, fills,
+balance — comes from the same MT5 account/instrument, so the Fibonacci
+levels line up with the prices your broker quotes.
+
+In **paper** mode the levels come from yfinance's COMEX gold futures
+(`GC=F`), which differ from spot XAUUSD by the futures basis. Paper mode
+is for learning the mechanics; absolute price levels won't match a live
+broker. Validate real levels in **dryrun** mode against your MT5 feed.
 
 ## Operational notes
 

@@ -95,6 +95,24 @@ class EngineSupervisor:
         # the simulated broker with starting_equity from .env.
         self._try_eager_connect()
 
+    def _make_feed(self):
+        """Live/dryrun pull OHLC from MT5 (same instrument the bot trades).
+        Paper mode uses yfinance for historical replay. If the MT5 feed
+        can't be built, fall back to yfinance with a loud warning so levels
+        at least populate (they may be mis-aligned vs spot)."""
+        if self.settings.mode in ("live", "dryrun"):
+            try:
+                from src.data.mt5_feed import MT5DataFeed
+                feed = MT5DataFeed(self.settings.symbol)
+                log.info("Data feed: MT5 (%s) — levels computed from broker prices",
+                          self.settings.symbol)
+                return feed
+            except Exception as exc:
+                log.warning("MT5 data feed unavailable (%s) — falling back to "
+                             "yfinance GC=F. WARNING: futures prices differ from "
+                             "your broker's spot; levels may be mis-aligned.", exc)
+        return YFinanceFeed()
+
     def _try_eager_connect(self) -> None:
         """Attach to MT5 at app startup so the dashboard shows the real
         account balance from the first page load.
@@ -220,9 +238,10 @@ class EngineSupervisor:
             log.info("Re-using pre-connected broker (%s)",
                       type(self.broker).__name__)
 
+        feed = self._make_feed()
         with self._lock:
             self.engine = Engine(self.settings, self.broker,
-                                  YFinanceFeed(), self.logger,
+                                  feed, self.logger,
                                   comex_tracker=self.comex_tracker)
         log.info("Engine ready · equity=$%.2f · CB threshold=%.0f%%",
                   self.broker.equity(),

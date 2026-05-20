@@ -456,6 +456,35 @@ def test_dashboard_renders_pending_entry_banner(client):
     assert b"awaiting your approval" in r.data
 
 
+def test_paper_mode_feed_is_yfinance(app):
+    """Paper mode uses yfinance for historical replay."""
+    from src.data.yfinance_feed import YFinanceFeed
+    sup = app.config["SUPERVISOR"]
+    feed = sup._make_feed()
+    assert isinstance(feed, YFinanceFeed)
+
+
+def test_live_mode_feed_falls_back_to_yfinance_without_mt5(tmp_path, caplog):
+    """Live mode tries MT5DataFeed; on Linux without MT5 it falls back to
+    yfinance and logs a loud warning about futures vs spot mis-alignment."""
+    import logging
+    from dataclasses import replace
+    from src.data.yfinance_feed import YFinanceFeed
+    caplog.set_level(logging.WARNING)
+    s = Settings(
+        mt5_login=0, mt5_password="", mt5_server="", mt5_terminal_path="",
+        symbol="XAUUSD", starting_equity=100_000, risk_pct=0.03,
+        magic_number=1, mode="live", log_level="WARNING",
+        log_dir=tmp_path / "logs", comex_webhook_enabled=False,
+    )
+    app = create_app(s)
+    sup = app.config["SUPERVISOR"]
+    feed = sup._make_feed()
+    # On Linux without MT5, MT5DataFeed import/construction fails → yfinance
+    assert isinstance(feed, YFinanceFeed)
+    assert any("futures prices differ" in r.message for r in caplog.records)
+
+
 def test_circuit_breaker_uses_configured_threshold(monkeypatch):
     """The CircuitBreaker safety check honours settings.circuit_breaker_pct."""
     from datetime import datetime, timezone
