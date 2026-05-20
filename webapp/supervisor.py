@@ -238,12 +238,20 @@ class EngineSupervisor:
         log.info("Live loop started · polling MT5 every 3s · heartbeat every 60s")
         current_day: Optional[date] = None
         last_heartbeat_console = 0.0
+        reconciled = False
         while not self._stop.is_set():
             now = datetime.now(tz=timezone.utc)
             if now.date() != current_day:
                 current_day = now.date()
                 with self._lock:
                     self.engine.start_day(current_day)
+                    # First day after (re)start: adopt any pre-existing
+                    # position so we never open a duplicate after a crash.
+                    if not reconciled:
+                        if self.engine.reconcile_open_positions(now):
+                            log.warning("Adopted a pre-existing position on "
+                                         "startup — no new entry will fire today")
+                        reconciled = True
             try:
                 if self.engine.state.position and not self.engine.state.position.closed:
                     quote = self.broker.quote(self.settings.symbol)

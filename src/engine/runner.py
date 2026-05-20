@@ -78,6 +78,110 @@ class Engine:
         self.log.event("premarket", _premarket_payload(ctx))
         return ctx
 
+    # ── Startup reconciliation ────────────────────────────
+    def reconcile_open_positions(self, now_utc: datetime) -> bool:
+        """On startup, adopt any pre-existing broker position carrying our
+        magic number so we never open a duplicate after a crash/restart.
+
+        Returns True if a position was adopted (or an overnight anomaly was
+        force-closed). Marks the daily lock fired so no new entry can happen
+        the same day."""
+        if self.state.position is not None and not self.state.position.closed:
+            return False
+        try:
+            tickets = self.broker.open_tickets(self.settings.symbol,
+                                                 self.settings.magic_number)
+        except Exception as exc:
+            self.log.warn(f"Reconcile: open_tickets() failed: {exc}")
+            return False
+        if not tickets:
+            return False
+
+        pos = self._reconstruct_position(tickets, now_utc)
+        self.state.position = pos
+        self.state.tickets = list(tickets)
+        if self.state.today is not None:
+            self.state.daily_lock.mark_fired(self.state.today)
+
+        # No-overnight rule: if the adopted position was opened on an earlier
+        # day, force-close it immediately rather than waiting for 20:55 UTC.
+        opened_date = tickets[0].opened_at_utc.date()
+        if self.state.today is not None and opened_date != self.state.today:
+            try:
+                price = self.broker.quote(self.settings.symbol).mid
+            except Exception:
+                price = pos.entry_price
+            self.log.warn(
+                f"Adopted position opened {opened_date} (not {self.state.today}) "
+                "— overnight anomaly, force-closing per no-overnight rule")
+            closed = exits.force_close_session_end(pos, price, now_utc)
+            for t in closed:
+                self._record_close(t)
+            self._post_trade_bookkeeping(pos)
+            return True
+
+        self.log.event("position_reconciled", {
+            "direction": pos.direction,
+            "entry_price": pos.entry_price,
+            "current_stop": pos.current_stop,
+            "tp1": pos.tp1, "tp2": pos.tp2,
+            "tp1_hit_inferred": pos.tp1_hit,
+            "open_tranches": [t.name for t in pos.open_tranches],
+            "ticket_ids": [t.broker_id for t in tickets],
+            "opened_at": tickets[0].opened_at_utc,
+        })
+        return True
+
+    def _reconstruct_position(self, tickets, now_utc: datetime) -> PositionState:
+        ref = tickets[0]
+        direction = "LONG" if ref.side == OrderSide.BUY else "SHORT"
+        h1 = next((t for t in tickets if t.comment.endswith("H1")), None)
+        h2 = next((t for t in tickets if t.comment.endswith("H2")), None)
+
+        entry_price = (h1 or ref).open_price
+        current_stop = (h2 or ref).sl
+        tp1 = h1.tp if (h1 and h1.tp) else None
+        tp2 = h2.tp if (h2 and h2.tp) else None
+
+        # Both halves carry the same comment-prefix; if H1 is gone but H2
+        # remains, TP1 must have already been hit.
+        tp1_hit_inferred = (h1 is None and h2 is not None)
+
+        ctx = self.state.premarket
+        if tp1 is None and ctx is not None:
+            tp1 = ctx.long_tp1 if direction == "LONG" else ctx.short_tp1
+        if tp2 is None and ctx is not None:
+            tp2 = ctx.long_tp2 if direction == "LONG" else ctx.short_tp2
+        tp1 = tp1 if tp1 is not None else entry_price
+        tp2 = tp2 if tp2 is not None else entry_price
+
+        tranches = []
+        for t in tickets:
+            if t.comment.endswith("H1"):
+                name = "H1"
+            elif t.comment.endswith("H2"):
+                name = "H2"
+            else:
+                name = t.comment[-2:] or "H?"
+            tranches.append(TrancheState(name=name, lots=t.volume_lots))
+
+        pos = PositionState(
+            direction=direction, entry_price=entry_price,
+            entry_time_utc=ref.opened_at_utc,
+            initial_stop=current_stop, tp1=tp1, tp2=tp2,
+            tranches=tranches,
+        )
+        pos.current_stop = current_stop
+        pos.tp1_hit = tp1_hit_inferred
+        pos.running_extreme = entry_price
+        pos.intraday_high = entry_price
+        pos.intraday_low = entry_price
+        if tp1_hit_inferred:
+            pos.trail_active = FLAGS.FILTER_D_TRAILING_STOP
+            if ctx is not None:
+                pos.trail_distance = 0.382 * ctx.range
+        return pos
+
     # ── Signal evaluation (called per 15m candle close) ──
     def evaluate_signal(
         self,
