@@ -77,3 +77,9 @@ class BrokerAdapter(ABC):
 
     @abstractmethod
     def open_tickets(self, symbol: str, magic: int) -> List[OrderTicket]: ...
+
+    def account_summary(self) -> dict:
+        """Connection / authentication status for the dashboard. Override in
+        each adapter. Default: not an MT5-backed broker."""
+        return {"connected": False, "kind": "unknown"}
+

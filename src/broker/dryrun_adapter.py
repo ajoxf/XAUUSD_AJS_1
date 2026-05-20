@@ -46,6 +46,11 @@ class DryRunAdapter(BrokerAdapter):
     def quote(self, symbol: str) -> TickQuote:
         return self.wrapped.quote(symbol)
 
+    def account_summary(self) -> dict:
+        summary = dict(self.wrapped.account_summary())
+        summary["dryrun"] = True
+        return summary
+
     # ── intercepted writes ──────────────────────────────
     def open_market(self, symbol, side, volume_lots, sl, tp, comment, magic,
                     max_slippage_per_oz) -> OrderTicket:

@@ -132,6 +132,33 @@ class MT5Adapter(BrokerAdapter):
             time_utc=datetime.fromtimestamp(tick.time, tz=timezone.utc),
         )
 
+    def account_summary(self) -> dict:
+        acc = mt5.account_info()
+        term = mt5.terminal_info()
+        if acc is None:
+            return {"connected": False, "kind": "mt5",
+                    "error": "no account logged in"}
+        mode_map = {
+            getattr(mt5, "ACCOUNT_TRADE_MODE_DEMO", 0): "DEMO",
+            getattr(mt5, "ACCOUNT_TRADE_MODE_CONTEST", 1): "CONTEST",
+            getattr(mt5, "ACCOUNT_TRADE_MODE_REAL", 2): "REAL",
+        }
+        return {
+            "connected": True,
+            "kind": "mt5",
+            "login": int(acc.login),
+            "server": acc.server,
+            "company": getattr(acc, "company", ""),
+            "trade_mode": mode_map.get(acc.trade_mode, str(acc.trade_mode)),
+            "currency": acc.currency,
+            "leverage": int(acc.leverage),
+            # terminal_info().trade_allowed reflects the MT5 "Algo Trading"
+            # toggle — the #1 reason orders silently fail.
+            "terminal_connected": bool(term.connected) if term else None,
+            "algo_trading_allowed": bool(term.trade_allowed) if term else None,
+            "symbol": self.settings.symbol,
+        }
+
     # ── orders ───────────────────────────────────────────
     def _filling_modes(self, info) -> list:
         """Preferred filling modes to try, in order. Brokers vary in which

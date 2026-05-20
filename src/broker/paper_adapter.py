@@ -42,6 +42,9 @@ class PaperAdapter(BrokerAdapter):
         # Paper sim only updates _equity on close; treat balance == equity.
         return self._equity
 
+    def account_summary(self) -> dict:
+        return {"connected": False, "kind": "paper"}
+
     def quote(self, symbol: str) -> TickQuote:
         return TickQuote(self._last_bid, self._last_ask, self._last_time)
 

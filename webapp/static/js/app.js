@@ -44,6 +44,41 @@ const App = (function () {
         eb.classList.add("d-none");
       }
     }
+    applyMt5(snap.mt5 || {});
+  }
+
+  function applyMt5(m) {
+    const el = document.getElementById("mt5-status");
+    if (!el) return;
+    el.className = "mt5-status";
+    if (!m.connected) {
+      el.classList.add(m.kind === "paper" ? "" : "down");
+      if (m.kind === "paper") {
+        el.innerHTML = "MT5: not used (paper)";
+      } else {
+        el.innerHTML = "MT5: 🔴 not connected" +
+          (m.error ? `<span class="sub">${m.error}</span>` : "");
+      }
+      el.title = m.error || "";
+      return;
+    }
+    // Connected — check algo trading + terminal link
+    const algoOff = m.algo_trading_allowed === false;
+    const termDown = m.terminal_connected === false;
+    if (algoOff || termDown) {
+      el.classList.add("warn");
+    } else {
+      el.classList.add("ok");
+    }
+    const dry = m.dryrun ? " · DRYRUN" : "";
+    let line = `MT5: 🟢 ${m.login} (${m.trade_mode})${dry}`;
+    const subs = [];
+    if (m.company) subs.push(m.company);
+    if (m.server) subs.push(m.server);
+    if (algoOff) subs.push("⚠ Algo Trading OFF — orders will be rejected");
+    if (termDown) subs.push("⚠ terminal not connected to broker");
+    el.innerHTML = line + (subs.length ? `<span class="sub">${subs.join(" · ")}</span>` : "");
+    el.title = `${m.company || ""} ${m.server || ""} ${m.currency || ""}`.trim();
   }
 
   function setText(id, text) {

@@ -44,6 +44,7 @@ class SupervisorSnapshot:
     premarket: Optional[Dict[str, Any]]
     position: Optional[Dict[str, Any]]
     pending_entry: Optional[Dict[str, Any]]
+    mt5: Dict[str, Any]
     week: Dict[str, Any]
     monitor: Dict[str, Any]
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
@@ -64,6 +65,7 @@ class SupervisorSnapshot:
             "premarket": self.premarket,
             "position": self.position,
             "pending_entry": self.pending_entry,
+            "mt5": self.mt5,
             "week": self.week,
             "monitor": self.monitor,
             "recent_events": self.recent_events,
@@ -474,9 +476,30 @@ class EngineSupervisor:
                 starting_equity=start_eq, peak_equity=peak,
                 drawdown_pct=drawdown_pct, today=today, premarket=premarket,
                 position=position, pending_entry=pending,
+                mt5=self._mt5_status_locked(),
                 week=week, monitor=monitor,
                 recent_events=self._read_recent_events(recent_events_limit),
             )
+
+    def _mt5_status_locked(self) -> Dict[str, Any]:
+        """MT5 connection/auth summary. Caller must hold self._lock."""
+        # Prefer the trading broker in live/dryrun, else the paper-mode
+        # reference broker. Either way we want the MT5-backed adapter.
+        candidates = []
+        if self.settings.mode in ("live", "dryrun") and self.broker is not None:
+            candidates.append(self.broker)
+        if self.reference_broker is not None:
+            candidates.append(self.reference_broker)
+        for b in candidates:
+            try:
+                summary = b.account_summary()
+                if summary.get("kind") == "mt5":
+                    summary["mode"] = self.settings.mode
+                    return summary
+            except Exception as exc:
+                return {"connected": False, "kind": "mt5", "error": str(exc)}
+        return {"connected": False, "kind": "paper" if self.settings.mode == "paper"
+                else "mt5", "error": "no MT5 broker attached"}
 
     def _quote_broker(self):
         """Pick the broker to read live quotes from, preferring an MT5

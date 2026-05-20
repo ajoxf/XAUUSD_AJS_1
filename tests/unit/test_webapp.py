@@ -566,6 +566,68 @@ def test_dashboard_has_manual_order_panel(client):
     assert b"btn-close-position" in r.data
 
 
+def test_mt5_status_in_snapshot_paper(app):
+    """Paper mode with no MT5 → mt5 block reports not connected (paper)."""
+    sup = app.config["SUPERVISOR"]
+    snap = sup.snapshot(recent_events_limit=0)
+    assert "mt5" in snap.to_dict()
+    assert snap.mt5["connected"] is False
+
+
+def test_mt5_status_reflects_account_summary(app):
+    """A broker exposing a connected MT5 summary is surfaced in the snapshot."""
+    from src.broker.paper_adapter import PaperAdapter
+
+    class _FakeMT5(PaperAdapter):
+        def account_summary(self):
+            return {"connected": True, "kind": "mt5", "login": 12345678,
+                    "server": "ICMarketsSC-Demo", "company": "IC Markets",
+                    "trade_mode": "DEMO", "currency": "USD", "leverage": 500,
+                    "terminal_connected": True, "algo_trading_allowed": True,
+                    "symbol": "XAUUSD"}
+
+    sup = app.config["SUPERVISOR"]
+    # Attach as paper-mode reference broker
+    sup.reference_broker = _FakeMT5(starting_equity=100_000.0)
+    status = sup._mt5_status_locked()
+    assert status["connected"] is True
+    assert status["login"] == 12345678
+    assert status["trade_mode"] == "DEMO"
+    assert status["algo_trading_allowed"] is True
+
+
+def test_mt5_status_flags_algo_trading_off(app):
+    from src.broker.paper_adapter import PaperAdapter
+
+    class _AlgoOff(PaperAdapter):
+        def account_summary(self):
+            return {"connected": True, "kind": "mt5", "login": 1, "server": "X",
+                    "company": "Y", "trade_mode": "REAL", "currency": "USD",
+                    "leverage": 100, "terminal_connected": True,
+                    "algo_trading_allowed": False, "symbol": "XAUUSD"}
+
+    sup = app.config["SUPERVISOR"]
+    sup.reference_broker = _AlgoOff(starting_equity=100_000.0)
+    status = sup._mt5_status_locked()
+    assert status["algo_trading_allowed"] is False
+
+
+def test_adapters_have_account_summary():
+    from src.broker.paper_adapter import PaperAdapter
+    from src.broker.dryrun_adapter import DryRunAdapter
+    p = PaperAdapter(starting_equity=1000.0)
+    assert p.account_summary()["kind"] == "paper"
+    d = DryRunAdapter(p, symbol="XAUUSD")
+    s = d.account_summary()
+    assert s["dryrun"] is True
+    assert s["kind"] == "paper"   # delegates to wrapped
+
+
+def test_dashboard_has_mt5_status_element(client):
+    r = client.get("/")
+    assert b'id="mt5-status"' in r.data
+
+
 def test_circuit_breaker_uses_configured_threshold(monkeypatch):
     """The CircuitBreaker safety check honours settings.circuit_breaker_pct."""
     from datetime import datetime, timezone
